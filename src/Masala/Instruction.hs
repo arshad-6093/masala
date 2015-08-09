@@ -4,186 +4,342 @@ import Data.Word
 
 import Prelude hiding (LT,GT,EQ)
 import qualified Data.Map as M
-import Data.Maybe
+import Numeric
+import Data.DoubleWord
+import Data.Bits
 
- --  Virtual machine bytecode instruction.
-data Instruction =  -- : uint8_t
--- {
-	STOP| -- = 0x00|		 -- < halts execution
-	ADD|				 -- < addition operation
-	MUL|				 -- < mulitplication operation
-	SUB|				 -- < subtraction operation
-	DIV|				 -- < integer division operation
-	SDIV|				 -- < signed integer division operation
-	MOD|				 -- < modulo remainder operation
-	SMOD|				 -- < signed modulo remainder operation
-	ADDMOD|				 -- < unsigned modular addition
-	MULMOD|				 -- < unsigned modular multiplication
-	EXP|				 -- < exponential operation
-	SIGNEXTEND|			 -- < extend length of signed integer
-
-	LT| -- = 0x10|		 -- < less-than comparision
-	GT|					 -- < greater-than comparision
-	SLT|				 -- < signed less-than comparision
-	SGT|				 -- < signed greater-than comparision
-	EQ|					 -- < equality comparision
-	ISZERO|				 -- < simple not operator
-	AND|				 -- < bitwise AND operation
-	OR|					 -- < bitwise OR operation
-	XOR|				 -- < bitwise XOR operation
-	NOT|				 -- < bitwise NOT opertation
-	BYTE|				 -- < retrieve single byte from word
-
-	SHA3| -- = 0x20|		 -- < compute SHA3-256 hash
-
-	ADDRESS| -- = 0x30|		 -- < get address of currently executing account
-	BALANCE|			 -- < get balance of the given account
-	ORIGIN|				 -- < get execution origination address
-	CALLER|				 -- < get caller address
-	CALLVALUE|			 -- < get deposited value by the instruction/transaction responsible for this execution
-	CALLDATALOAD|		 -- < get input data of current environment
-	CALLDATASIZE|		 -- < get size of input data in current environment
-	CALLDATACOPY|		 -- < copy input data in current environment to memory
-	CODESIZE|			 -- < get size of code running in current environment
-	CODECOPY|			 -- < copy code running in current environment to memory
-	GASPRICE|			 -- < get price of gas in current environment
-	EXTCODESIZE|		 -- < get external code size (from another contract)
-	EXTCODECOPY|		 -- < copy external code (from another contract)
-
-	BLOCKHASH| --  = 0x40|	 -- < get hash of most recent complete block
-	COINBASE|			 -- < get the block's coinbase address
-	TIMESTAMP|			 -- < get the block's timestamp
-	NUMBER|				 -- < get the block's number
-	DIFFICULTY|			 -- < get the block's difficulty
-	GASLIMIT|			 -- < get the block's gas limit
-
-	POP| -- = 0x50|			 -- < remove item from stack
-	MLOAD|				 -- < load word from memory
-	MSTORE|				 -- < save word to memory
-	MSTORE8|			 -- < save byte to memory
-	SLOAD|				 -- < load word from storage
-	SSTORE|				 -- < save word to storage
-	JUMP|				 -- < alter the program counter
-	JUMPI|				 -- < conditionally alter the program counter
-	PC|					 -- < get the program counter
-	MSIZE|				 -- < get the size of active memory
-	GAS|				 -- < get the amount of available gas
-	JUMPDEST|			 -- < set a potential jump destination
-
-	PUSH1| -- = 0x60|		 -- < place 1 byte item on stack
-	PUSH2|				 -- < place 2 byte item on stack
-	PUSH3|				 -- < place 3 byte item on stack
-	PUSH4|				 -- < place 4 byte item on stack
-	PUSH5|				 -- < place 5 byte item on stack
-	PUSH6|				 -- < place 6 byte item on stack
-	PUSH7|				 -- < place 7 byte item on stack
-	PUSH8|				 -- < place 8 byte item on stack
-	PUSH9|				 -- < place 9 byte item on stack
-	PUSH10|				 -- < place 10 byte item on stack
-	PUSH11|				 -- < place 11 byte item on stack
-	PUSH12|				 -- < place 12 byte item on stack
-	PUSH13|				 -- < place 13 byte item on stack
-	PUSH14|				 -- < place 14 byte item on stack
-	PUSH15|				 -- < place 15 byte item on stack
-	PUSH16|				 -- < place 16 byte item on stack
-	PUSH17|				 -- < place 17 byte item on stack
-	PUSH18|				 -- < place 18 byte item on stack
-	PUSH19|				 -- < place 19 byte item on stack
-	PUSH20|				 -- < place 20 byte item on stack
-	PUSH21|				 -- < place 21 byte item on stack
-	PUSH22|				 -- < place 22 byte item on stack
-	PUSH23|				 -- < place 23 byte item on stack
-	PUSH24|				 -- < place 24 byte item on stack
-	PUSH25|				 -- < place 25 byte item on stack
-	PUSH26|				 -- < place 26 byte item on stack
-	PUSH27|				 -- < place 27 byte item on stack
-	PUSH28|				 -- < place 28 byte item on stack
-	PUSH29|				 -- < place 29 byte item on stack
-	PUSH30|				 -- < place 30 byte item on stack
-	PUSH31|				 -- < place 31 byte item on stack
-	PUSH32|				 -- < place 32 byte item on stack
-
-	DUP1| -- = 0x80|		 -- < copies the highest item in the stack to the top of the stack
-	DUP2|				 -- < copies the second highest item in the stack to the top of the stack
-	DUP3|				 -- < copies the third highest item in the stack to the top of the stack
-	DUP4|				 -- < copies the 4th highest item in the stack to the top of the stack
-	DUP5|				 -- < copies the 5th highest item in the stack to the top of the stack
-	DUP6|				 -- < copies the 6th highest item in the stack to the top of the stack
-	DUP7|				 -- < copies the 7th highest item in the stack to the top of the stack
-	DUP8|				 -- < copies the 8th highest item in the stack to the top of the stack
-	DUP9|				 -- < copies the 9th highest item in the stack to the top of the stack
-	DUP10|				 -- < copies the 10th highest item in the stack to the top of the stack
-	DUP11|				 -- < copies the 11th highest item in the stack to the top of the stack
-	DUP12|				 -- < copies the 12th highest item in the stack to the top of the stack
-	DUP13|				 -- < copies the 13th highest item in the stack to the top of the stack
-	DUP14|				 -- < copies the 14th highest item in the stack to the top of the stack
-	DUP15|				 -- < copies the 15th highest item in the stack to the top of the stack
-	DUP16|				 -- < copies the 16th highest item in the stack to the top of the stack
-
-	SWAP1| -- = 0x90|		 -- < swaps the highest and second highest value on the stack
-	SWAP2|				 -- < swaps the highest and third highest value on the stack
-	SWAP3|				 -- < swaps the highest and 4th highest value on the stack
-	SWAP4|				 -- < swaps the highest and 5th highest value on the stack
-	SWAP5|				 -- < swaps the highest and 6th highest value on the stack
-	SWAP6|				 -- < swaps the highest and 7th highest value on the stack
-	SWAP7|				 -- < swaps the highest and 8th highest value on the stack
-	SWAP8|				 -- < swaps the highest and 9th highest value on the stack
-	SWAP9|				 -- < swaps the highest and 10th highest value on the stack
-	SWAP10|				 -- < swaps the highest and 11th highest value on the stack
-	SWAP11|				 -- < swaps the highest and 12th highest value on the stack
-	SWAP12|				 -- < swaps the highest and 13th highest value on the stack
-	SWAP13|				 -- < swaps the highest and 14th highest value on the stack
-	SWAP14|				 -- < swaps the highest and 15th highest value on the stack
-	SWAP15|				 -- < swaps the highest and 16th highest value on the stack
-	SWAP16|				 -- < swaps the highest and 17th highest value on the stack
-
-	LOG0| -- = 0xa0|		 -- < Makes a log entry; no topics.
-	LOG1|				 -- < Makes a log entry; 1 topic.
-	LOG2|				 -- < Makes a log entry; 2 topics.
-	LOG3|				 -- < Makes a log entry; 3 topics.
-	LOG4|				 -- < Makes a log entry; 4 topics.
-
-	CREATE| -- = 0xf0|		 -- < create a new account with associated code
-	CALL|				 -- < message-call into an account
-	CALLCODE|			 -- < message-call with another account's code only
-	RETURN|				 -- < halt execution returning output data
-	SUICIDE -- = 0xff		 -- < halt execution and register account for later deletion
---};
+ -- All instructions.
+data Instruction = 
+      STOP 
+    | ADD 
+    | MUL 
+    | SUB 
+    | DIV 
+    | SDIV 
+    | MOD 
+    | SMOD 
+    | ADDMOD 
+    | MULMOD 
+    | EXP 
+    | SIGNEXTEND 
+    | LT 
+    | GT 
+    | SLT 
+    | SGT 
+    | EQ 
+    | ISZERO 
+    | AND 
+    | OR 
+    | XOR 
+    | NOT 
+    | BYTE 
+    | SHA3 
+    | ADDRESS 
+    | BALANCE 
+    | ORIGIN 
+    | CALLER 
+    | CALLVALUE 
+    | CALLDATALOAD 
+    | CALLDATASIZE 
+    | CALLDATACOPY 
+    | CODESIZE 
+    | CODECOPY 
+    | GASPRICE 
+    | EXTCODESIZE 
+    | EXTCODECOPY 
+    | BLOCKHASH 
+    | COINBASE 
+    | TIMESTAMP 
+    | NUMBER 
+    | DIFFICULTY 
+    | GASLIMIT 
+    | POP 
+    | MLOAD 
+    | MSTORE 
+    | MSTORE8 
+    | SLOAD 
+    | SSTORE 
+    | JUMP 
+    | JUMPI 
+    | PC 
+    | MSIZE 
+    | GAS 
+    | JUMPDEST 
+    | PUSH1 
+    | PUSH2 
+    | PUSH3 
+    | PUSH4 
+    | PUSH5 
+    | PUSH6 
+    | PUSH7 
+    | PUSH8 
+    | PUSH9 
+    | PUSH10 
+    | PUSH11 
+    | PUSH12 
+    | PUSH13 
+    | PUSH14 
+    | PUSH15 
+    | PUSH16 
+    | PUSH17 
+    | PUSH18 
+    | PUSH19 
+    | PUSH20 
+    | PUSH21 
+    | PUSH22 
+    | PUSH23 
+    | PUSH24 
+    | PUSH25 
+    | PUSH26 
+    | PUSH27 
+    | PUSH28 
+    | PUSH29 
+    | PUSH30 
+    | PUSH31 
+    | PUSH32 
+    | DUP1 
+    | DUP2 
+    | DUP3 
+    | DUP4 
+    | DUP5 
+    | DUP6 
+    | DUP7 
+    | DUP8 
+    | DUP9 
+    | DUP10 
+    | DUP11 
+    | DUP12 
+    | DUP13 
+    | DUP14 
+    | DUP15 
+    | DUP16 
+    | SWAP1 
+    | SWAP2 
+    | SWAP3 
+    | SWAP4 
+    | SWAP5 
+    | SWAP6 
+    | SWAP7 
+    | SWAP8 
+    | SWAP9 
+    | SWAP10 
+    | SWAP11 
+    | SWAP12 
+    | SWAP13 
+    | SWAP14 
+    | SWAP15 
+    | SWAP16 
+    | LOG0 
+    | LOG1 
+    | LOG2 
+    | LOG3 
+    | LOG4 
+    | CREATE 
+    | CALL 
+    | CALLCODE 
+    | RETURN 
+    | SUICIDE 
   deriving (Eq,Show,Enum,Ord,Bounded)
 
-allInstructions :: [Instruction]
-allInstructions = [minBound .. maxBound]
+-- | map Word8s to Instructions.
+valueToInst :: M.Map Word8 Instruction
+valueToInst = M.fromList $ map assn [minBound .. maxBound]
+    where assn i = (value (spec i),i)
 
-instToWord8 :: M.Map Instruction Word8
-instToWord8 = snd . foldl f (0x00,M.empty) $ allInstructions
-    where f (pw,m) i = (nw,M.insert i nw m)
-              where nw = case i of
-                           STOP -> 0x00
-                           LT -> 0x10
-                           SHA3 -> 0x20
-                           ADDRESS -> 0x30
-                           BLOCKHASH  -> 0x40
-                           POP -> 0x50
-                           PUSH1 -> 0x60
-                           DUP1 -> 0x80
-                           SWAP1 -> 0x90
-                           LOG0 -> 0xa0
-                           CREATE -> 0xf0
-                           SUICIDE -> 0xff
-                           _ -> succ pw
-
-word8ToInst :: M.Map Word8 Instruction
-word8ToInst = M.fromList . map (\(k,v) -> (v,k)) . M.toList $ instToWord8
-
+-- | convert hex string to Word8s.
 hexToWord8s :: String -> [Word8]
-hexToWord8s prog = conv [] prog
-    where conv is [] = reverse is
-          conv _is [_c] = error $ "Malformed program: " ++ prog
-          conv is (c1:c2:cs) = conv (read ['0','x',c1,c2]:is) cs
+hexToWord8s prog = conv 0 [] prog
+    where conv :: Int -> [Word8] -> String -> [Word8] 
+          conv _ is [] = reverse is
+          conv _ _is [_c] = error $ "Malformed program, single char at end: " ++ prog
+          conv idx is (c1:c2:cs) = 
+              case readHex [c1,c2] of
+                [(w,"")] -> conv (succ idx) (w:is) cs
+                _ -> error $ "Invalid hex (index " ++ 
+                     show idx ++ ", value " ++ [c1,c2] ++ ")"
 
-hexToInstrs :: String -> [Instruction]
-hexToInstrs = map toI . hexToWord8s 
-    where toI w = fromMaybe (error $ "Invalid instruction " ++ show w) $
-                  M.lookup w word8ToInst 
-                  
+-- | parse Word8s to bytecode rep.
+parse :: [Word8] -> [ByteCode]
+parse prog = inst [] . zip [0..] $ prog
+    where inst bcs [] = reverse bcs
+          inst bcs ((idx,v):ws) = 
+              case M.lookup v valueToInst of
+                Nothing -> err idx "Instruction expected"
+                Just i -> 
+                    case paramSpec (spec i) of
+                      Push n -> push idx n (Inst i:bcs) ws
+                      _ -> inst (Inst i:bcs) ws
+          push idx n bcs ws | n > length ws = 
+                                err idx ("PUSH" ++show n ++ ": not enough input")
+                            | otherwise = 
+                                inst (PushV (w8sToU256 $ map snd $ take n ws):bcs) (drop n ws)
+          err idx msg = error $ msg ++ " (index " ++ show idx ++ 
+                        ", value " ++ show (prog !! idx) ++ ")"
 
+-- | parse hex to bytecode rep.
+parseHex :: String -> [ByteCode]
+parseHex = parse . hexToWord8s
+
+
+type U256 = Word256
+type S256 = Int256
+
+   
+w8sToU256 :: [Word8] -> U256
+w8sToU256 = fst. foldl acc (0,0) 
+    where acc (t,p) v = (t + shift (fromIntegral v) p, p + 8)                                       
+          
+data ByteCode = 
+          Inst Instruction 
+        | PushV U256
+          deriving (Eq)
+
+instance Show ByteCode where 
+    show (Inst i) = show i
+    show (PushV w) = show w
+
+data ParamSpec =
+          Empty
+        | Push Int
+        | Dup Int
+        | Swap Int
+        | Log Int
+        deriving (Eq,Show)
+
+data Spec = Spec { 
+      value :: Word8, 
+      stackIn :: Int, 
+      stackOut :: Int, 
+      paramSpec :: ParamSpec 
+    } deriving Show
+
+spec :: Instruction -> Spec
+spec STOP = Spec 0x00 0 0 Empty 
+spec ADD = Spec 0x01 2 1 Empty 
+spec MUL = Spec 0x02 2 1 Empty 
+spec SUB = Spec 0x03 2 1 Empty 
+spec DIV = Spec 0x04 2 1 Empty 
+spec SDIV = Spec 0x05 2 1 Empty 
+spec MOD = Spec 0x06 2 1 Empty 
+spec SMOD = Spec 0x07 2 1 Empty 
+spec ADDMOD = Spec 0x08 3 1 Empty 
+spec MULMOD = Spec 0x09 3 1 Empty 
+spec EXP = Spec 0x0a 2 1 Empty 
+spec SIGNEXTEND = Spec 0x0b 2 1 Empty 
+spec LT = Spec 0x10 2 1 Empty 
+spec GT = Spec 0x11 2 1 Empty 
+spec SLT = Spec 0x12 2 1 Empty 
+spec SGT = Spec 0x13 2 1 Empty 
+spec EQ = Spec 0x14 2 1 Empty 
+spec ISZERO = Spec 0x15 1 1 Empty 
+spec AND = Spec 0x16 2 1 Empty 
+spec OR = Spec 0x17 2 1 Empty 
+spec XOR = Spec 0x18 2 1 Empty 
+spec NOT = Spec 0x19 1 1 Empty 
+spec BYTE = Spec 0x1a 2 1 Empty 
+spec SHA3 = Spec 0x20 2 1 Empty 
+spec ADDRESS = Spec 0x30 0 1 Empty 
+spec BALANCE = Spec 0x31 1 1 Empty 
+spec ORIGIN = Spec 0x32 0 1 Empty 
+spec CALLER = Spec 0x33 0 1 Empty 
+spec CALLVALUE = Spec 0x34 0 1 Empty 
+spec CALLDATALOAD = Spec 0x35 1 1 Empty 
+spec CALLDATASIZE = Spec 0x36 0 1 Empty 
+spec CALLDATACOPY = Spec 0x37 3 0 Empty 
+spec CODESIZE = Spec 0x38 0 1 Empty 
+spec CODECOPY = Spec 0x39 3 0 Empty 
+spec GASPRICE = Spec 0x3a 0 1 Empty 
+spec EXTCODESIZE = Spec 0x3b 1 1 Empty 
+spec EXTCODECOPY = Spec 0x3c 4 0 Empty 
+spec BLOCKHASH = Spec 0x40 1 1 Empty 
+spec COINBASE = Spec 0x41 0 1 Empty 
+spec TIMESTAMP = Spec 0x42 0 1 Empty 
+spec NUMBER = Spec 0x43 0 1 Empty 
+spec DIFFICULTY = Spec 0x44 0 1 Empty 
+spec GASLIMIT = Spec 0x45 0 1 Empty 
+spec POP = Spec 0x50 1 0 Empty 
+spec MLOAD = Spec 0x51 1 1 Empty 
+spec MSTORE = Spec 0x52 2 0 Empty 
+spec MSTORE8 = Spec 0x53 2 0 Empty 
+spec SLOAD = Spec 0x54 1 1 Empty 
+spec SSTORE = Spec 0x55 2 0 Empty 
+spec JUMP = Spec 0x56 1 0 Empty 
+spec JUMPI = Spec 0x57 2 0 Empty 
+spec PC = Spec 0x58 0 1 Empty 
+spec MSIZE = Spec 0x59 0 1 Empty 
+spec GAS = Spec 0x5a 0 1 Empty 
+spec JUMPDEST = Spec 0x5b 0 0 Empty 
+spec PUSH1 =  Spec  96 0 1 (Push 1)
+spec PUSH2 =  Spec  97 0 1 (Push 2)
+spec PUSH3 =  Spec  98 0 1 (Push 3)
+spec PUSH4 =  Spec  99 0 1 (Push 4)
+spec PUSH5 =  Spec 100 0 1 (Push 5)
+spec PUSH6 =  Spec 101 0 1 (Push 6)
+spec PUSH7 =  Spec 102 0 1 (Push 7)
+spec PUSH8 =  Spec 103 0 1 (Push 8)
+spec PUSH9 =  Spec 104 0 1 (Push 9)
+spec PUSH10 = Spec 105 0 1 (Push 10)
+spec PUSH11 = Spec 106 0 1 (Push 11)
+spec PUSH12 = Spec 107 0 1 (Push 12)
+spec PUSH13 = Spec 108 0 1 (Push 13)
+spec PUSH14 = Spec 109 0 1 (Push 14)
+spec PUSH15 = Spec 110 0 1 (Push 15)
+spec PUSH16 = Spec 111 0 1 (Push 16)
+spec PUSH17 = Spec 112 0 1 (Push 17)
+spec PUSH18 = Spec 113 0 1 (Push 18)
+spec PUSH19 = Spec 114 0 1 (Push 19)
+spec PUSH20 = Spec 115 0 1 (Push 20)
+spec PUSH21 = Spec 116 0 1 (Push 21)
+spec PUSH22 = Spec 117 0 1 (Push 22)
+spec PUSH23 = Spec 118 0 1 (Push 23)
+spec PUSH24 = Spec 119 0 1 (Push 24)
+spec PUSH25 = Spec 120 0 1 (Push 25)
+spec PUSH26 = Spec 121 0 1 (Push 26)
+spec PUSH27 = Spec 122 0 1 (Push 27)
+spec PUSH28 = Spec 123 0 1 (Push 28)
+spec PUSH29 = Spec 124 0 1 (Push 29)
+spec PUSH30 = Spec 125 0 1 (Push 30)
+spec PUSH31 = Spec 126 0 1 (Push 31)
+spec PUSH32 = Spec 127 0 1 (Push 32)
+spec DUP1 = Spec 128 0 1 (Dup 1)
+spec DUP2 = Spec 129 0 1 (Dup 2)
+spec DUP3 = Spec 130 0 1 (Dup 3)
+spec DUP4 = Spec 131 0 1 (Dup 4)
+spec DUP5 = Spec 132 0 1 (Dup 5)
+spec DUP6 = Spec 133 0 1 (Dup 6)
+spec DUP7 = Spec 134 0 1 (Dup 7)
+spec DUP8 = Spec 135 0 1 (Dup 8)
+spec DUP9 = Spec 136 0 1 (Dup 9)
+spec DUP10 = Spec 137 0 1 (Dup 10)
+spec DUP11 = Spec 138 0 1 (Dup 11)
+spec DUP12 = Spec 139 0 1 (Dup 12)
+spec DUP13 = Spec 140 0 1 (Dup 13)
+spec DUP14 = Spec 141 0 1 (Dup 14)
+spec DUP15 = Spec 142 0 1 (Dup 15)
+spec DUP16 = Spec 143 0 1 (Dup 16)
+spec SWAP1 = Spec 145 0 1 (Swap 1)
+spec SWAP2 = Spec 146 0 1 (Swap 2)
+spec SWAP3 = Spec 147 0 1 (Swap 3)
+spec SWAP4 = Spec 148 0 1 (Swap 4)
+spec SWAP5 = Spec 149 0 1 (Swap 5)
+spec SWAP6 = Spec 150 0 1 (Swap 6)
+spec SWAP7 = Spec 151 0 1 (Swap 7)
+spec SWAP8 = Spec 152 0 1 (Swap 8)
+spec SWAP9 = Spec 153 0 1 (Swap 9)
+spec SWAP10 = Spec 154 0 1 (Swap 10)
+spec SWAP11 = Spec 155 0 1 (Swap 11)
+spec SWAP12 = Spec 156 0 1 (Swap 12)
+spec SWAP13 = Spec 157 0 1 (Swap 13)
+spec SWAP14 = Spec 158 0 1 (Swap 14)
+spec SWAP15 = Spec 159 0 1 (Swap 15)
+spec SWAP16 = Spec 160 0 1 (Swap 16)
+spec LOG0 = Spec 0xa0 0 1 (Log 0)
+spec LOG1 = Spec 0xa1 0 1 (Log 1)
+spec LOG2 = Spec 0xa2 0 1 (Log 2)
+spec LOG3 = Spec 0xa3 0 1 (Log 3)
+spec LOG4 = Spec 0xa4 0 1 (Log 4)
+spec CREATE = Spec 0xf0 3 1 Empty 
+spec CALL = Spec 0xf1 7 1 Empty 
+spec CALLCODE = Spec 0xf2 7 1 Empty 
+spec RETURN = Spec 0xf3 2 0 Empty 
+spec SUICIDE = Spec 0xff 1 0 Empty 
