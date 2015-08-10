@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 module Masala.Instruction where
 
 import Data.Word 
