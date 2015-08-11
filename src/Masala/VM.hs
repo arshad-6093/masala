@@ -43,17 +43,17 @@ data Env = Env {
 type VM m = (Functor m, Monad m, Applicative m,
              MonadIO m,
              MonadState VMState m,
-             MonadError String m, 
+             MonadError String m,
              MonadReader Env m)
 
-data ControlFlow = 
+data ControlFlow =
           Next
         | Stop
         | Jump Int
     deriving (Show)
 
 stack :: Lens' VMState Stack
-stack f s = fmap (\a -> s { _stack = a }) (f $ _stack s)  
+stack f s = fmap (\a -> s { _stack = a }) (f $ _stack s)
 ctr :: Lens' VMState Ctr
 ctr f s = fmap (\a -> s { _ctr = a }) (f $ _ctr s)
 gas :: Lens' VMState Gas
@@ -86,7 +86,7 @@ forward :: VM m => m Bool
 forward = do
   c <- use ctr
   p <- reader prog
-  if c + 1 >= V.length p 
+  if c + 1 >= V.length p
   then return False
   else do
     ctr .= c + 1
@@ -94,15 +94,15 @@ forward = do
 
 
 runVM :: Env -> IO (Either String ())
-runVM env = evalStateT (runReaderT (runErrorT go) env) 
+runVM env = evalStateT (runReaderT (runErrorT go) env)
                     (VMState [] 0 0)
     where go = do
             cf <- exec
-            case cf of 
+            case cf of
               Next -> do
                       notDone <- forward
-                      if notDone 
-                      then go 
+                      if notDone
+                      then go
                       else do
                         d <- reader debug
                         vm <- get
@@ -110,7 +110,7 @@ runVM env = evalStateT (runReaderT (runErrorT go) env)
                         return ()
 
 run_ :: String -> IO (Either String ())
-run_ hex = runVM (Env True (V.fromList (parseHex hex)) 0 0 0 0 0 0 0 0 0 0 0 0 0) 
+run_ hex = runVM (Env True (V.fromList (parseHex hex)) 0 0 0 0 0 0 0 0 0 0 0 0 0)
 
 
 exec :: VM m => m ControlFlow
@@ -123,18 +123,18 @@ exec = do
             svals <- pops stackin
             d <- reader debug
             when d $ debugOut i svals
-            dispatch i (pspec,svals) 
+            dispatch i (pspec,svals)
 
 debugOut :: VM m => Instruction -> [U256] -> m ()
-debugOut i pspec = do
+debugOut i svals = do
   vm <- get
-  liftIO $ print (i,pspec,vm)
- 
+  liftIO $ print (i,svals,vm)
+
 next :: VM m => m ControlFlow
 next = return Next
 
 pushb :: VM m => Bool -> m ()
-pushb b = push $ if b then 1 else 0 
+pushb b = push $ if b then 1 else 0
 
 sgn :: U256 -> S256
 sgn = fromIntegral
@@ -163,11 +163,26 @@ swap n = do
 log :: VM m => Int -> m ()
 log = undefined
 
+sdiv :: S256 -> S256 -> S256
+sdiv a b | b == 0 = 0
+         | a == bigneg || b == (-1) = bigneg
+         | otherwise = a `div` b
+         where bigneg = (-2) ^ (255 :: Int)
+
+signextend :: Int -> U256 -> U256
+signextend k v | k > 31 = v
+               | otherwise = let t = (k * 8) + 7
+                                 mask = ((1 :: U256) `shiftL` t) - 1
+                             in if v `testBit` t
+                                then v .|. complement mask
+                                else v .&. mask
+
+
 dispatch :: VM m => Instruction -> (ParamSpec,[U256]) -> m ControlFlow
 dispatch STOP _ = return Stop
 dispatch _ (Push _,_) = do
   notDone <- forward
-  if notDone 
+  if notDone
   then do
     n <- current
     case n of
@@ -175,67 +190,66 @@ dispatch _ (Push _,_) = do
       _ -> err "Push: Instruction encountered"
   else err "Push: at EOF"
 dispatch ADD (_,[a,b]) = push (a + b) >> next
-dispatch MUL (_,[a,b]) = push (a * b) >> next 
-dispatch SUB (_,[a,b]) = push (a - b) >> next 
-dispatch DIV (_,[a,b]) = 
-    push (if b == 0 then 0 else a `div` b) >> next 
-dispatch SDIV (_,[a,b]) = 
-    pushs (if b == 0 then 0 else sgn a `div` sgn b) >> next
-dispatch MOD (_,[a,b]) = push (a `mod` b) >> next 
+dispatch MUL (_,[a,b]) = push (a * b) >> next
+dispatch SUB (_,[a,b]) = push (a - b) >> next
+dispatch DIV (_,[a,b]) =
+    push (if b == 0 then 0 else a `div` b) >> next
+dispatch SDIV (_,[a,b]) = pushs (sgn a `sdiv` sgn b) >> next
+dispatch MOD (_,[a,b]) = push (a `mod` b) >> next
 dispatch SMOD (_,[a,b]) = pushs (sgn a `mod` sgn b) >> next
 dispatch ADDMOD (_,[a,b,c]) = push (a + b `mod` c) >> next
-dispatch MULMOD (_,[a,b,c]) = push (a * b `mod` c) >> next 
-dispatch EXP (_,[a,b]) = push (a ^ b) >> next 
-dispatch SIGNEXTEND _ = err "TODO" 
-dispatch LT (_,[a,b]) = pushb (a < b) >> next 
-dispatch GT (_,[a,b]) = pushb (a > b) >> next 
-dispatch SLT (_,[a,b]) = pushb (sgn a < sgn b) >> next 
-dispatch SGT (_,[a,b]) = pushb (sgn a > sgn b) >> next 
-dispatch EQ (_,[a,b]) = pushb (a == b) >> next 
-dispatch ISZERO (_,[a]) = pushb (a == 0) >> next 
-dispatch AND (_,[a,b]) = push (a .&. b) >> next 
-dispatch OR (_,[a,b]) = push (a .|. b) >> next  
-dispatch XOR (_,[a,b]) = push (a `xor` b) >> next  
-dispatch NOT (_,[a]) = push (complement a) >> next 
-dispatch BYTE _ = err "TODO" 
-dispatch SHA3 _ = err "TODO" 
+dispatch MULMOD (_,[a,b,c]) = push (a * b `mod` c) >> next
+dispatch EXP (_,[a,b]) = push (a ^ b) >> next
+dispatch SIGNEXTEND (_,[a,b]) = push (fromIntegral a `signextend` b) >> next
+dispatch LT (_,[a,b]) = pushb (a < b) >> next
+dispatch GT (_,[a,b]) = pushb (a > b) >> next
+dispatch SLT (_,[a,b]) = pushb (sgn a < sgn b) >> next
+dispatch SGT (_,[a,b]) = pushb (sgn a > sgn b) >> next
+dispatch EQ (_,[a,b]) = pushb (a == b) >> next
+dispatch ISZERO (_,[a]) = pushb (a == 0) >> next
+dispatch AND (_,[a,b]) = push (a .&. b) >> next
+dispatch OR (_,[a,b]) = push (a .|. b) >> next
+dispatch XOR (_,[a,b]) = push (a `xor` b) >> next
+dispatch NOT (_,[a]) = push (complement a) >> next
+dispatch BYTE _ = err "TODO"
+dispatch SHA3 _ = err "TODO"
 dispatch ADDRESS _ = reader address >>= push >> next
-dispatch BALANCE _ = err "TODO" 
-dispatch ORIGIN _ = reader origin >>= push >> next 
-dispatch CALLER _ = reader caller >>= push >> next 
-dispatch CALLVALUE _ = reader callValue >>= push >> next 
-dispatch CALLDATALOAD _ = err "TODO" 
-dispatch CALLDATASIZE _ = err "TODO" 
-dispatch CALLDATACOPY _ = err "TODO" 
-dispatch CODESIZE _ = err "TODO" 
-dispatch CODECOPY _ = err "TODO" 
-dispatch GASPRICE _ = reader gasPrice >>= push >> next 
-dispatch EXTCODESIZE _ = err "TODO" 
-dispatch EXTCODECOPY _ = err "TODO" 
-dispatch BLOCKHASH _ = err "TODO" 
-dispatch COINBASE _ = reader coinbase >>= push >> next 
-dispatch TIMESTAMP _ = reader timestamp >>= push >> next 
-dispatch NUMBER _ = reader number >>= push >> next 
-dispatch DIFFICULTY _ = reader difficulty >>= push >> next 
-dispatch GASLIMIT _ = reader gaslimit >>= push >> next 
-dispatch POP _ = pops 1 >> next 
-dispatch MLOAD _ = err "TODO" 
-dispatch MSTORE _ = err "TODO" 
-dispatch MSTORE8 _ = err "TODO" 
-dispatch SLOAD _ = err "TODO" 
-dispatch SSTORE _ = err "TODO" 
-dispatch JUMP _ = err "TODO" 
-dispatch JUMPI _ = err "TODO" 
+dispatch BALANCE _ = err "TODO"
+dispatch ORIGIN _ = reader origin >>= push >> next
+dispatch CALLER _ = reader caller >>= push >> next
+dispatch CALLVALUE _ = reader callValue >>= push >> next
+dispatch CALLDATALOAD _ = err "TODO"
+dispatch CALLDATASIZE _ = err "TODO"
+dispatch CALLDATACOPY _ = err "TODO"
+dispatch CODESIZE _ = err "TODO"
+dispatch CODECOPY _ = err "TODO"
+dispatch GASPRICE _ = reader gasPrice >>= push >> next
+dispatch EXTCODESIZE _ = err "TODO"
+dispatch EXTCODECOPY _ = err "TODO"
+dispatch BLOCKHASH _ = err "TODO"
+dispatch COINBASE _ = reader coinbase >>= push >> next
+dispatch TIMESTAMP _ = reader timestamp >>= push >> next
+dispatch NUMBER _ = reader number >>= push >> next
+dispatch DIFFICULTY _ = reader difficulty >>= push >> next
+dispatch GASLIMIT _ = reader gaslimit >>= push >> next
+dispatch POP _ = pops 1 >> next
+dispatch MLOAD _ = err "TODO"
+dispatch MSTORE _ = err "TODO"
+dispatch MSTORE8 _ = err "TODO"
+dispatch SLOAD _ = err "TODO"
+dispatch SSTORE _ = err "TODO"
+dispatch JUMP _ = err "TODO"
+dispatch JUMPI _ = err "TODO"
 dispatch PC _ = fromIntegral <$> use ctr >>= push >> next
-dispatch MSIZE _ = err "TODO" 
-dispatch GAS _ = err "TODO" 
-dispatch JUMPDEST _ = err "TODO" 
-dispatch _ (Dup n,_) = dup n >> next 
-dispatch _ (Swap n,_) = swap n >> next 
-dispatch _ (Log n,_) = log n >> next 
-dispatch CREATE _ = err "TODO" 
-dispatch CALL _ = err "TODO" 
-dispatch CALLCODE _ = err "TODO" 
-dispatch RETURN _ = err "TODO" 
-dispatch SUICIDE _ = err "TODO" 
+dispatch MSIZE _ = err "TODO"
+dispatch GAS _ = err "TODO"
+dispatch JUMPDEST _ = err "TODO"
+dispatch _ (Dup n,_) = dup n >> next
+dispatch _ (Swap n,_) = swap n >> next
+dispatch _ (Log n,_) = log n >> next
+dispatch CREATE _ = err "TODO"
+dispatch CALL _ = err "TODO"
+dispatch CALLCODE _ = err "TODO"
+dispatch RETURN _ = err "TODO"
+dispatch SUICIDE _ = err "TODO"
 dispatch _ ps = err $ "Unsupported operation [" ++ show ps ++ "]"
