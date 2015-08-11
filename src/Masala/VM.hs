@@ -19,6 +19,8 @@ import Control.Monad.Error
 import qualified Data.Vector as V
 import Control.Applicative
 import Prelude hiding (LT,GT,EQ,log)
+import Numeric
+import Data.Char (intToDigit)
 
 
 type Stack = [U256]
@@ -110,8 +112,12 @@ runVM env = evalStateT (runReaderT (runErrorT go) env)
                         return ()
 
 run_ :: String -> IO (Either String ())
-run_ hex = runVM (Env True (V.fromList (parseHex hex)) 0 0 0 0 0 0 0 0 0 0 0 0 0)
+run_ = runBC_ . parseHex
 
+runBC_ :: [ByteCode] -> IO (Either String ())
+runBC_ bc = runVM (Env True (V.fromList bc) 0 0 0 0 0 0 0 0 0 0 0 0 0)
+
+bin_ i = showIntAtBase 2 intToDigit i ""
 
 exec :: VM m => m ControlFlow
 exec = do
@@ -169,13 +175,22 @@ sdiv a b | b == 0 = 0
          | otherwise = a `div` b
          where bigneg = (-2) ^ (255 :: Int)
 
+-- TODO: C++ code (per tests) routinely masks after (t - 3) bits whereas this
+-- code seems to do the right thing per spec.
 signextend :: Int -> U256 -> U256
-signextend k v | k > 31 = v
-               | otherwise = let t = (k * 8) + 7
-                                 mask = ((1 :: U256) `shiftL` t) - 1
-                             in if v `testBit` t
-                                then v .|. complement mask
-                                else v .&. mask
+signextend k v 
+    | k > 31 = v
+    | otherwise = 
+        let t = (k * 8) + 7
+            mask = ((1 :: U256) `shiftL` t) - 1
+        in if v `testBit` t
+           then v .|. complement mask
+           else v .&. mask
+
+byte :: Int -> U256 -> U256
+byte p v 
+    | p > 31 = 0
+    | otherwise = (v `shiftR` (8 * (31 - p))) .&. 0xff
 
 
 dispatch :: VM m => Instruction -> (ParamSpec,[U256]) -> m ControlFlow
@@ -211,7 +226,7 @@ dispatch AND (_,[a,b]) = push (a .&. b) >> next
 dispatch OR (_,[a,b]) = push (a .|. b) >> next
 dispatch XOR (_,[a,b]) = push (a `xor` b) >> next
 dispatch NOT (_,[a]) = push (complement a) >> next
-dispatch BYTE _ = err "TODO"
+dispatch BYTE (_,[a,b]) = push (fromIntegral a `byte` b) >> next
 dispatch SHA3 _ = err "TODO"
 dispatch ADDRESS _ = reader address >>= push >> next
 dispatch BALANCE _ = err "TODO"
