@@ -1,8 +1,10 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Masala.VM where
 
@@ -42,8 +44,32 @@ data Env = Env {
     , number, difficulty, gaslimit :: U256
 }
 
+class (Monad m,Functor m,Applicative m) => MonadExt m where
+    xStore :: U256 -> U256 -> m ()
+    xLoad :: U256 -> m U256
+    xBalance :: U256 -> m U256
+    xPrint :: Show a => a -> m ()
+
+instance MonadExt m => MonadExt (ReaderT r m) where
+    xStore a = lift . xStore a 
+    xLoad = lift . xLoad
+    xBalance = lift . xBalance
+    xPrint = lift . xPrint
+
+instance MonadExt m => MonadExt (StateT s m) where
+    xStore a = lift . xStore a 
+    xLoad = lift . xLoad
+    xBalance = lift . xBalance
+    xPrint = lift . xPrint
+
+instance (Error e, MonadExt m) => MonadExt (ErrorT e m) where
+    xStore a = lift . xStore a 
+    xLoad = lift . xLoad
+    xBalance = lift . xBalance
+    xPrint = lift . xPrint
+
 type VM m = (Functor m, Monad m, Applicative m,
-             MonadIO m,
+             MonadExt m,
              MonadState VMState m,
              MonadError String m,
              MonadReader Env m)
@@ -95,7 +121,7 @@ forward = do
     return True
 
 
-runVM :: Env -> IO (Either String ())
+runVM :: MonadExt m => Env -> m (Either String ())
 runVM env = evalStateT (runReaderT (runErrorT go) env)
                     (VMState [] 0 0)
     where go = do
@@ -108,14 +134,22 @@ runVM env = evalStateT (runReaderT (runErrorT go) env)
                       else do
                         d <- reader debug
                         vm <- get
-                        when d $ liftIO $ print vm
+                        when d $ xPrint vm
                         return ()
 
 run_ :: String -> IO (Either String ())
 run_ = runBC_ . parseHex
 
 runBC_ :: [ByteCode] -> IO (Either String ())
-runBC_ bc = runVM (Env True (V.fromList bc) 0 0 0 0 0 0 0 0 0 0 0 0 0)
+runBC_ bc = runTestExt (runVM (Env True (V.fromList bc) 0 0 0 0 0 0 0 0 0 0 0 0 0))
+
+newtype TestExtM a = TestExtM (IO a) deriving (Monad, Functor, Applicative, MonadIO)
+runTestExt (TestExtM x) = x
+instance MonadExt (TestExtM) where
+    xPrint a = liftIO $ print a
+    xStore a b = undefined
+    xLoad = undefined
+    xBalance = undefined
 
 bin_ i = showIntAtBase 2 intToDigit i ""
 
@@ -134,7 +168,7 @@ exec = do
 debugOut :: VM m => Instruction -> [U256] -> m ()
 debugOut i svals = do
   vm <- get
-  liftIO $ print (i,svals,vm)
+  xPrint (i,svals,vm)
 
 next :: VM m => m ControlFlow
 next = return Next
