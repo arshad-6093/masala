@@ -6,6 +6,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE KindSignatures #-}
+
 module Masala.VM where
 
 import Data.DoubleWord
@@ -23,15 +25,18 @@ import Control.Applicative
 import Prelude hiding (LT,GT,EQ,log)
 import Numeric
 import Data.Char (intToDigit)
+import qualified Data.Map.Strict as M
+import Data.Maybe
 
 
 type Stack = [U256]
 type Prog = V.Vector ByteCode
+type Mem = M.Map U256 U256
 type Ctr = Int
 data VMState = VMState {
       _stack :: Stack
     , _ctr :: Ctr
-    , _gas :: Gas
+    , _mem :: Mem
 } deriving (Eq,Show)
 
 data Env = Env {
@@ -42,6 +47,7 @@ data Env = Env {
     , balance, envGas, gasPrice, callValue :: U256
     , prevHash, coinbase, timestamp :: U256
     , number, difficulty, gaslimit :: U256
+    , calldata :: [U256]
 }
 
 class (Monad m,Functor m,Applicative m) => MonadExt m where
@@ -51,19 +57,19 @@ class (Monad m,Functor m,Applicative m) => MonadExt m where
     xPrint :: Show a => a -> m ()
 
 instance MonadExt m => MonadExt (ReaderT r m) where
-    xStore a = lift . xStore a 
+    xStore a = lift . xStore a
     xLoad = lift . xLoad
     xBalance = lift . xBalance
     xPrint = lift . xPrint
 
 instance MonadExt m => MonadExt (StateT s m) where
-    xStore a = lift . xStore a 
+    xStore a = lift . xStore a
     xLoad = lift . xLoad
     xBalance = lift . xBalance
     xPrint = lift . xPrint
 
 instance (Error e, MonadExt m) => MonadExt (ErrorT e m) where
-    xStore a = lift . xStore a 
+    xStore a = lift . xStore a
     xLoad = lift . xLoad
     xBalance = lift . xBalance
     xPrint = lift . xPrint
@@ -73,6 +79,15 @@ type VM m = (Functor m, Monad m, Applicative m,
              MonadState VMState m,
              MonadError String m,
              MonadReader Env m)
+
+data VMActions (m :: * -> *) = VMActions
+newtype VMT m a = VMT {
+      runVMT :: (Env,VMState,VMActions m) -> m (Either String (a,(Env,VMState,VMActions m)))
+}
+{-
+class MonadVM m where
+    getVMState :: m VMSt
+-}
 
 data ControlFlow =
           Next
@@ -84,18 +99,19 @@ stack :: Lens' VMState Stack
 stack f s = fmap (\a -> s { _stack = a }) (f $ _stack s)
 ctr :: Lens' VMState Ctr
 ctr f s = fmap (\a -> s { _ctr = a }) (f $ _ctr s)
-gas :: Lens' VMState Gas
-gas f s = fmap (\a -> s { _gas = a }) (f $ _gas s)
+mem :: Lens' VMState Mem
+mem f s = fmap (\a -> s { _mem = a }) (f $ _mem s)
 
 push :: (VM m) => U256 -> m ()
 push i = stack %= (i:)
 
 
 pops :: Int -> VM m => m [U256]
-pops n = do
+pops n | n == 0 = return []
+       | otherwise = do
   s <- use stack
   if n > length s
-  then err $ "Stack underflow, expected " ++ show n
+  then err $ "Stack underflow, expected " ++ show n ++ "," ++ show (length s)
   else do
     stack .= drop n s
     return (take n s)
@@ -123,7 +139,7 @@ forward = do
 
 runVM :: MonadExt m => Env -> m (Either String ())
 runVM env = evalStateT (runReaderT (runErrorT go) env)
-                    (VMState [] 0 0)
+                    (VMState [] 0 M.empty)
     where go = do
             cf <- exec
             case cf of
@@ -140,8 +156,8 @@ runVM env = evalStateT (runReaderT (runErrorT go) env)
 run_ :: String -> IO (Either String ())
 run_ = runBC_ . parseHex
 
-runBC_ :: [ByteCode] -> IO (Either String ())
-runBC_ bc = runTestExt (runVM (Env True (V.fromList bc) 0 0 0 0 0 0 0 0 0 0 0 0 0))
+runBC_ :: ToByteCode a => [a] -> IO (Either String ())
+runBC_ bc = runTestExt (runVM (Env True (V.fromList (concatMap toByteCode bc)) 0 0 0 0 0 0 0 0 0 0 0 0 0 []))
 
 newtype TestExtM a = TestExtM (IO a) deriving (Monad, Functor, Applicative, MonadIO)
 runTestExt (TestExtM x) = x
@@ -212,9 +228,9 @@ sdiv a b | b == 0 = 0
 -- TODO: C++ code (per tests) routinely masks after (t - 3) bits whereas this
 -- code seems to do the right thing per spec.
 signextend :: Int -> U256 -> U256
-signextend k v 
+signextend k v
     | k > 31 = v
-    | otherwise = 
+    | otherwise =
         let t = (k * 8) + 7
             mask = ((1 :: U256) `shiftL` t) - 1
         in if v `testBit` t
@@ -222,9 +238,19 @@ signextend k v
            else v .&. mask
 
 byte :: Int -> U256 -> U256
-byte p v 
+byte p v
     | p > 31 = 0
     | otherwise = (v `shiftR` (8 * (31 - p))) .&. 0xff
+
+mload :: VM m => U256 -> m U256
+mload i = do
+  mv <- M.lookup i <$> use mem
+  case mv of
+    Just v -> return v
+    Nothing -> mem %= M.insert i 0 >> return 0
+
+mstore :: VM m => U256 -> U256 -> m ()
+mstore i v = mem %= M.insert i v
 
 
 dispatch :: VM m => Instruction -> (ParamSpec,[U256]) -> m ControlFlow
@@ -268,9 +294,9 @@ dispatch ORIGIN _ = reader origin >>= push >> next
 dispatch CALLER _ = reader caller >>= push >> next
 dispatch CALLVALUE _ = reader callValue >>= push >> next
 dispatch CALLDATALOAD _ = err "TODO"
-dispatch CALLDATASIZE _ = err "TODO"
+dispatch CALLDATASIZE _ = fromIntegral . length <$> reader calldata >>= push >> next
 dispatch CALLDATACOPY _ = err "TODO"
-dispatch CODESIZE _ = err "TODO"
+dispatch CODESIZE _ = fromIntegral . V.length <$> reader prog >>= push >> next
 dispatch CODECOPY _ = err "TODO"
 dispatch GASPRICE _ = reader gasPrice >>= push >> next
 dispatch EXTCODESIZE _ = err "TODO"
@@ -281,16 +307,16 @@ dispatch TIMESTAMP _ = reader timestamp >>= push >> next
 dispatch NUMBER _ = reader number >>= push >> next
 dispatch DIFFICULTY _ = reader difficulty >>= push >> next
 dispatch GASLIMIT _ = reader gaslimit >>= push >> next
-dispatch POP _ = pops 1 >> next
-dispatch MLOAD _ = err "TODO"
-dispatch MSTORE _ = err "TODO"
-dispatch MSTORE8 _ = err "TODO"
+dispatch POP _ = next -- Spec of 1 already popped the stack!
+dispatch MLOAD (_,[a]) = mload a >>= push >> next
+dispatch MSTORE (_,[a,b]) = mstore a b >> next
+dispatch MSTORE8 (_,[a,b]) = mstore a b >> next
 dispatch SLOAD _ = err "TODO"
 dispatch SSTORE _ = err "TODO"
 dispatch JUMP _ = err "TODO"
 dispatch JUMPI _ = err "TODO"
 dispatch PC _ = fromIntegral <$> use ctr >>= push >> next
-dispatch MSIZE _ = err "TODO"
+dispatch MSIZE _ = fromIntegral . M.size <$> use mem >>= push >> next
 dispatch GAS _ = err "TODO"
 dispatch JUMPDEST _ = err "TODO"
 dispatch _ (Dup n,_) = dup n >> next

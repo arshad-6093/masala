@@ -1,4 +1,6 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleInstances #-}
+
 module Masala.Instruction where
 
 import Data.Word
@@ -194,6 +196,19 @@ data ByteCode =
           Inst Instruction
         | PushV U256
           deriving (Eq)
+
+infixr 8 +>
+
+(+>) :: (ToByteCode a,ToByteCode b) => a -> b -> [ByteCode]
+a +> b = toByteCode a ++ toByteCode b
+
+wPUSH :: U256 -> [ByteCode]
+wPUSH = (Inst PUSH1:) . return . PushV
+
+class ToByteCode a where toByteCode :: a -> [ByteCode]
+instance ToByteCode Instruction where toByteCode = return . Inst
+instance ToByteCode ByteCode where toByteCode = return
+instance ToByteCode [ByteCode] where toByteCode = id
 
 instance Show ByteCode where
     show (Inst i) = show i
