@@ -27,67 +27,45 @@ import Numeric
 import Data.Char (intToDigit)
 import qualified Data.Map.Strict as M
 import Data.Maybe
+import qualified Data.List as L
+import Data.Monoid
 
 
 type Stack = [U256]
 type Prog = V.Vector ByteCode
 type Mem = M.Map U256 U256
 type Ctr = Int
-data VMState = VMState {
+data VMState e = VMState {
       _stack :: Stack
     , _ctr :: Ctr
     , _mem :: Mem
+    , _ext :: e
 } deriving (Eq,Show)
 
-data Env = Env {
+data Ext e = Ext {
+      xStore :: U256 -> U256 -> e -> e
+    , xLoad :: U256 -> e -> Maybe U256
+}
+
+data Env e = Env {
       debug :: Bool
+    , callData :: V.Vector U256
+    , extApi :: Ext e
     , prog :: Prog
     , address :: U256
     , origin, caller :: U256
     , balance, envGas, gasPrice, callValue :: U256
     , prevHash, coinbase, timestamp :: U256
     , number, difficulty, gaslimit :: U256
-    , calldata :: [U256]
 }
 
-class (Monad m,Functor m,Applicative m) => MonadExt m where
-    xStore :: U256 -> U256 -> m ()
-    xLoad :: U256 -> m U256
-    xBalance :: U256 -> m U256
-    xPrint :: Show a => a -> m ()
 
-instance MonadExt m => MonadExt (ReaderT r m) where
-    xStore a = lift . xStore a
-    xLoad = lift . xLoad
-    xBalance = lift . xBalance
-    xPrint = lift . xPrint
-
-instance MonadExt m => MonadExt (StateT s m) where
-    xStore a = lift . xStore a
-    xLoad = lift . xLoad
-    xBalance = lift . xBalance
-    xPrint = lift . xPrint
-
-instance (Error e, MonadExt m) => MonadExt (ErrorT e m) where
-    xStore a = lift . xStore a
-    xLoad = lift . xLoad
-    xBalance = lift . xBalance
-    xPrint = lift . xPrint
-
-type VM m = (Functor m, Monad m, Applicative m,
-             MonadExt m,
-             MonadState VMState m,
+type VM m e = (Functor m, Monad m, Applicative m,
+             MonadIO m,
+             MonadState (VMState e) m,
              MonadError String m,
-             MonadReader Env m)
+             MonadReader (Env e) m)
 
-data VMActions (m :: * -> *) = VMActions
-newtype VMT m a = VMT {
-      runVMT :: (Env,VMState,VMActions m) -> m (Either String (a,(Env,VMState,VMActions m)))
-}
-{-
-class MonadVM m where
-    getVMState :: m VMSt
--}
 
 data ControlFlow =
           Next
@@ -95,18 +73,20 @@ data ControlFlow =
         | Jump Int
     deriving (Show)
 
-stack :: Lens' VMState Stack
+stack :: Lens' (VMState e) Stack
 stack f s = fmap (\a -> s { _stack = a }) (f $ _stack s)
-ctr :: Lens' VMState Ctr
+ctr :: Lens' (VMState e) Ctr
 ctr f s = fmap (\a -> s { _ctr = a }) (f $ _ctr s)
-mem :: Lens' VMState Mem
+mem :: Lens' (VMState e) Mem
 mem f s = fmap (\a -> s { _mem = a }) (f $ _mem s)
+ext :: Lens' (VMState e) e
+ext f s = fmap (\a -> s { _ext = a }) (f $ _ext s)
 
-push :: (VM m) => U256 -> m ()
+push :: (VM m e) => U256 -> m ()
 push i = stack %= (i:)
 
 
-pops :: Int -> VM m => m [U256]
+pops :: Int -> VM m e => m [U256]
 pops n | n == 0 = return []
        | otherwise = do
   s <- use stack
@@ -116,17 +96,17 @@ pops n | n == 0 = return []
     stack .= drop n s
     return (take n s)
 
-current :: VM m => m ByteCode
+current :: VM m e => m ByteCode
 current = (V.!) <$> reader prog <*> use ctr
 
-err :: VM m => String -> m a
+err :: VM m e => String -> m a
 err msg = do
   idx <- use ctr
   bc <- current
   throwError $ msg ++ " (index " ++ show idx ++
           ", value " ++ show bc ++ ")"
 
-forward :: VM m => m Bool
+forward :: VM m e => m Bool
 forward = do
   c <- use ctr
   p <- reader prog
@@ -137,9 +117,9 @@ forward = do
     return True
 
 
-runVM :: MonadExt m => Env -> m (Either String ())
-runVM env = evalStateT (runReaderT (runErrorT go) env)
-                    (VMState [] 0 M.empty)
+runVM :: (MonadIO m, Functor m, Show ext) => ext -> Env ext -> m (Either String ())
+runVM extState env = evalStateT (runReaderT (runErrorT go) env)
+                    (VMState [] 0 M.empty extState)
     where go = do
             cf <- exec
             case cf of
@@ -150,26 +130,29 @@ runVM env = evalStateT (runReaderT (runErrorT go) env)
                       else do
                         d <- reader debug
                         vm <- get
-                        when d $ xPrint vm
+                        when d $ liftIO $ print vm
                         return ()
 
 run_ :: String -> IO (Either String ())
 run_ = runBC_ . parseHex
 
 runBC_ :: ToByteCode a => [a] -> IO (Either String ())
-runBC_ bc = runTestExt (runVM (Env True (V.fromList (concatMap toByteCode bc)) 0 0 0 0 0 0 0 0 0 0 0 0 0 []))
+runBC_ bc = runVM M.empty
+            (Env True (V.fromList [1,2,3,4,5]) testExt
+             (V.fromList (concatMap toByteCode bc))
+             0 0 0 0 0 0 0 0 0 0 0 0 0)
 
-newtype TestExtM a = TestExtM (IO a) deriving (Monad, Functor, Applicative, MonadIO)
-runTestExt (TestExtM x) = x
-instance MonadExt (TestExtM) where
-    xPrint a = liftIO $ print a
-    xStore a b = undefined
-    xLoad = undefined
-    xBalance = undefined
+testExt :: Ext (M.Map U256 U256)
+testExt = Ext {
+            xStore = M.insert
+          , xLoad = M.lookup
+          }
 
+
+bin_ :: (Show a, Integral a) => a -> String
 bin_ i = showIntAtBase 2 intToDigit i ""
 
-exec :: VM m => m ControlFlow
+exec :: (Show e, VM m e) => m ControlFlow
 exec = do
   bc <- current
   case bc of
@@ -181,42 +164,42 @@ exec = do
             when d $ debugOut i svals
             dispatch i (pspec,svals)
 
-debugOut :: VM m => Instruction -> [U256] -> m ()
+debugOut :: (Show e, VM m e) => Instruction -> [U256] -> m ()
 debugOut i svals = do
   vm <- get
-  xPrint (i,svals,vm)
+  liftIO $ print (i,svals,vm)
 
-next :: VM m => m ControlFlow
+next :: VM m e => m ControlFlow
 next = return Next
 
-pushb :: VM m => Bool -> m ()
+pushb :: VM m e => Bool -> m ()
 pushb b = push $ if b then 1 else 0
 
 sgn :: U256 -> S256
 sgn = fromIntegral
 
-pushs :: VM m => S256 -> m ()
+pushs :: VM m e => S256 -> m ()
 pushs = push . fromIntegral
 
 
 
-dup :: VM m => Int -> m ()
+dup :: VM m e => Int -> m ()
 dup n = stackAt (n - 1) >>= push
 
-stackAt :: VM m => Int -> m U256
+stackAt :: VM m e => Int -> m U256
 stackAt n = do
   s <- firstOf (ix n) <$> use stack
   case s of
     Nothing -> err $ "stackAt " ++ show n ++ ": stack underflow"
     Just w -> return w
 
-swap :: VM m => Int -> m ()
+swap :: VM m e => Int -> m ()
 swap n = do
   s0 <- stackAt 0
   sn <- stackAt n
   stack %= set (ix 0) sn . set (ix n) s0
 
-log :: VM m => Int -> m ()
+log :: VM m e => Int -> m ()
 log = undefined
 
 sdiv :: S256 -> S256 -> S256
@@ -242,18 +225,37 @@ byte p v
     | p > 31 = 0
     | otherwise = (v `shiftR` (8 * (31 - p))) .&. 0xff
 
-mload :: VM m => U256 -> m U256
+mload :: VM m e => U256 -> m U256
 mload i = do
   mv <- M.lookup i <$> use mem
   case mv of
     Just v -> return v
     Nothing -> mem %= M.insert i 0 >> return 0
 
-mstore :: VM m => U256 -> U256 -> m ()
+mstore :: VM m e => U256 -> U256 -> m ()
 mstore i v = mem %= M.insert i v
 
 
-dispatch :: VM m => Instruction -> (ParamSpec,[U256]) -> m ControlFlow
+sload :: VM m e => U256 -> m U256
+sload i = do
+  f <- xLoad <$> reader extApi
+  fromMaybe 0 . f i <$> use ext
+
+sstore :: VM m e => U256 -> U256 -> m ()
+sstore a b = do
+  f <- xStore <$> reader extApi
+  ext %= f a b
+
+copyMem :: VM m e => U256 -> Int -> Int -> V.Vector U256 -> m ()
+copyMem memloc off len v
+    | V.length v < off + len = return ()
+    | otherwise =
+        mem %= mappend (M.fromList . zip [memloc ..] . V.toList . V.slice off len $ v)
+
+jump :: VM m e => U256 -> m ControlFlow
+jump = undefined
+
+dispatch :: VM m e => Instruction -> (ParamSpec,[U256]) -> m ControlFlow
 dispatch STOP _ = return Stop
 dispatch _ (Push _,_) = do
   notDone <- forward
@@ -293,9 +295,10 @@ dispatch BALANCE _ = err "TODO"
 dispatch ORIGIN _ = reader origin >>= push >> next
 dispatch CALLER _ = reader caller >>= push >> next
 dispatch CALLVALUE _ = reader callValue >>= push >> next
-dispatch CALLDATALOAD _ = err "TODO"
-dispatch CALLDATASIZE _ = fromIntegral . length <$> reader calldata >>= push >> next
-dispatch CALLDATACOPY _ = err "TODO"
+dispatch CALLDATALOAD (_,[a]) = fromMaybe 0 . (V.!? fromIntegral a) <$> reader callData >>= push >> next
+dispatch CALLDATASIZE _ = fromIntegral . V.length <$> reader callData >>= push >> next
+dispatch CALLDATACOPY (_,[a,b,c]) = reader callData >>=
+                                    copyMem a (fromIntegral b) (fromIntegral c) >> next
 dispatch CODESIZE _ = fromIntegral . V.length <$> reader prog >>= push >> next
 dispatch CODECOPY _ = err "TODO"
 dispatch GASPRICE _ = reader gasPrice >>= push >> next
@@ -307,14 +310,14 @@ dispatch TIMESTAMP _ = reader timestamp >>= push >> next
 dispatch NUMBER _ = reader number >>= push >> next
 dispatch DIFFICULTY _ = reader difficulty >>= push >> next
 dispatch GASLIMIT _ = reader gaslimit >>= push >> next
-dispatch POP _ = next -- Spec of 1 already popped the stack!
+dispatch POP _ = next -- spec already pops 1 stack, so no-op
 dispatch MLOAD (_,[a]) = mload a >>= push >> next
 dispatch MSTORE (_,[a,b]) = mstore a b >> next
 dispatch MSTORE8 (_,[a,b]) = mstore a b >> next
-dispatch SLOAD _ = err "TODO"
-dispatch SSTORE _ = err "TODO"
-dispatch JUMP _ = err "TODO"
-dispatch JUMPI _ = err "TODO"
+dispatch SLOAD (_,[a]) = sload a >>= push >> next
+dispatch SSTORE (_,[a,b]) = sstore a b >> next
+dispatch JUMP (_,[a]) = jump a
+dispatch JUMPI (_,[a,b]) = if b /= 0 then jump a else next
 dispatch PC _ = fromIntegral <$> use ctr >>= push >> next
 dispatch MSIZE _ = fromIntegral . M.size <$> use mem >>= push >> next
 dispatch GAS _ = err "TODO"
