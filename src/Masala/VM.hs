@@ -31,8 +31,12 @@ import qualified Data.List as L
 import Data.Monoid
 
 
+data Prog = Prog {
+      code :: V.Vector ByteCode
+    , codeMap :: M.Map U256 Int
+}
+
 type Stack = [U256]
-type Prog = V.Vector ByteCode
 type Mem = M.Map U256 U256
 type Ctr = Int
 data VMState e = VMState {
@@ -59,6 +63,8 @@ data Env e = Env {
     , number, difficulty, gaslimit :: U256
 }
 
+data Output = Output { oValue :: [Word8] } deriving (Eq,Show)
+
 
 type VM m e = (Functor m, Monad m, Applicative m,
              MonadIO m,
@@ -71,6 +77,7 @@ data ControlFlow =
           Next
         | Stop
         | Jump Int
+        | Return [Word8]
     deriving (Show)
 
 stack :: Lens' (VMState e) Stack
@@ -81,6 +88,12 @@ mem :: Lens' (VMState e) Mem
 mem f s = fmap (\a -> s { _mem = a }) (f $ _mem s)
 ext :: Lens' (VMState e) e
 ext f s = fmap (\a -> s { _ext = a }) (f $ _ext s)
+
+
+toProg :: [ByteCode] -> Prog
+toProg bc = Prog (V.fromList bc) (M.fromList (map idx (zip [0..] bc)))
+    where idx (c,b@(ByteCode n i _)) = (fromIntegral n,c)
+
 
 push :: (VM m e) => U256 -> m ()
 push i = stack %= (i:)
@@ -97,7 +110,11 @@ pops n | n == 0 = return []
     return (take n s)
 
 current :: VM m e => m ByteCode
-current = (V.!) <$> reader prog <*> use ctr
+current = do
+  c <- use ctr
+  (Prog p _) <- reader prog
+  return $ p V.! c
+
 
 err :: VM m e => String -> m a
 err msg = do
@@ -109,7 +126,7 @@ err msg = do
 forward :: VM m e => m Bool
 forward = do
   c <- use ctr
-  p <- reader prog
+  (Prog p _) <- reader prog
   if c + 1 >= V.length p
   then return False
   else do
@@ -117,7 +134,7 @@ forward = do
     return True
 
 
-runVM :: (MonadIO m, Functor m, Show ext) => ext -> Env ext -> m (Either String ())
+runVM :: (MonadIO m, Functor m, Show ext) => ext -> Env ext -> m (Either String Output)
 runVM extState env = evalStateT (runReaderT (runErrorT go) env)
                     (VMState [] 0 M.empty extState)
     where go = do
@@ -127,19 +144,26 @@ runVM extState env = evalStateT (runReaderT (runErrorT go) env)
                       notDone <- forward
                       if notDone
                       then go
-                      else do
-                        d <- reader debug
-                        vm <- get
-                        when d $ liftIO $ print vm
-                        return ()
+                      else done []
+                        
+              Jump c -> do
+                      ctr .= c
+                      go
+              Stop -> done []
+              Return ws -> done ws
+          done ws = do
+                 d <- reader debug
+                 vm <- get
+                 when d $ liftIO $ print vm
+                 return (Output ws)
 
-run_ :: String -> IO (Either String ())
+run_ :: String -> IO (Either String Output)
 run_ = runBC_ . parseHex
 
-runBC_ :: ToByteCode a => [a] -> IO (Either String ())
+runBC_ :: ToByteCode a => [a] -> IO (Either String Output)
 runBC_ bc = runVM M.empty
             (Env True (V.fromList [1,2,3,4,5]) testExt
-             (V.fromList (concatMap toByteCode bc))
+             (toProg (concatMap toByteCode bc))
              0 0 0 0 0 0 0 0 0 0 0 0 0)
 
 testExt :: Ext (M.Map U256 U256)
@@ -154,17 +178,17 @@ bin_ i = showIntAtBase 2 intToDigit i ""
 
 exec :: (Show e, VM m e) => m ControlFlow
 exec = do
-  bc <- current
-  case bc of
-    PushV _ -> err "Push value at top-level"
-    Inst i -> do
-            let (Spec _ stackin _ pspec) = spec i
-            svals <- pops stackin
-            d <- reader debug
-            when d $ debugOut i svals
-            dispatch i (pspec,svals)
+  bc@(ByteCode _ i ws) <- current
+  let (Spec _ stackin _ pspec) = spec i
+  svals <- pops stackin
+  d <- reader debug
+  when d $ debugOut bc svals
+  if null ws 
+  then dispatch i (pspec,svals)
+  else push (w8sToU256 ws) >> next
+    
 
-debugOut :: (Show e, VM m e) => Instruction -> [U256] -> m ()
+debugOut :: (Show e, VM m e) => ByteCode -> [U256] -> m ()
 debugOut i svals = do
   vm <- get
   liftIO $ print (i,svals,vm)
@@ -252,20 +276,21 @@ copyMem memloc off len v
     | otherwise =
         mem %= mappend (M.fromList . zip [memloc ..] . V.toList . V.slice off len $ v)
 
+getMem :: VM m e => U256 -> U256 -> m [Word8]
+getMem loc len | len > 0 = concatMap u256ToW8s <$> mapM mload [loc .. loc + (len - 1)]
+    
+
 jump :: VM m e => U256 -> m ControlFlow
-jump = undefined
+jump j = do
+  bc <- M.lookup j . codeMap <$> reader prog
+  case bc of
+    Nothing -> err $ "jump: invalid address " ++ show j
+    Just c -> return (Jump c) 
+            
+        
 
 dispatch :: VM m e => Instruction -> (ParamSpec,[U256]) -> m ControlFlow
 dispatch STOP _ = return Stop
-dispatch _ (Push _,_) = do
-  notDone <- forward
-  if notDone
-  then do
-    n <- current
-    case n of
-      (PushV w) -> push w >> next
-      _ -> err "Push: Instruction encountered"
-  else err "Push: at EOF"
 dispatch ADD (_,[a,b]) = push (a + b) >> next
 dispatch MUL (_,[a,b]) = push (a * b) >> next
 dispatch SUB (_,[a,b]) = push (a - b) >> next
@@ -299,7 +324,7 @@ dispatch CALLDATALOAD (_,[a]) = fromMaybe 0 . (V.!? fromIntegral a) <$> reader c
 dispatch CALLDATASIZE _ = fromIntegral . V.length <$> reader callData >>= push >> next
 dispatch CALLDATACOPY (_,[a,b,c]) = reader callData >>=
                                     copyMem a (fromIntegral b) (fromIntegral c) >> next
-dispatch CODESIZE _ = fromIntegral . V.length <$> reader prog >>= push >> next
+dispatch CODESIZE _ = fromIntegral . V.length . code <$> reader prog >>= push >> next
 dispatch CODECOPY _ = err "TODO"
 dispatch GASPRICE _ = reader gasPrice >>= push >> next
 dispatch EXTCODESIZE _ = err "TODO"
@@ -310,7 +335,7 @@ dispatch TIMESTAMP _ = reader timestamp >>= push >> next
 dispatch NUMBER _ = reader number >>= push >> next
 dispatch DIFFICULTY _ = reader difficulty >>= push >> next
 dispatch GASLIMIT _ = reader gaslimit >>= push >> next
-dispatch POP _ = next -- spec already pops 1 stack, so no-op
+dispatch POP _ = next -- exec already pops 1 per spec
 dispatch MLOAD (_,[a]) = mload a >>= push >> next
 dispatch MSTORE (_,[a,b]) = mstore a b >> next
 dispatch MSTORE8 (_,[a,b]) = mstore a b >> next
@@ -321,13 +346,14 @@ dispatch JUMPI (_,[a,b]) = if b /= 0 then jump a else next
 dispatch PC _ = fromIntegral <$> use ctr >>= push >> next
 dispatch MSIZE _ = fromIntegral . M.size <$> use mem >>= push >> next
 dispatch GAS _ = err "TODO"
-dispatch JUMPDEST _ = err "TODO"
+dispatch JUMPDEST _ = next -- per spec: "Mark a valid destination for jumps."
+                           -- "This operation has no effect on machine state during execution."
 dispatch _ (Dup n,_) = dup n >> next
 dispatch _ (Swap n,_) = swap n >> next
 dispatch _ (Log n,_) = log n >> next
 dispatch CREATE _ = err "TODO"
 dispatch CALL _ = err "TODO"
 dispatch CALLCODE _ = err "TODO"
-dispatch RETURN _ = err "TODO"
+dispatch RETURN (_,[a,b]) = Return <$> getMem (a `div` 32) (b `div` 32)
 dispatch SUICIDE _ = err "TODO"
 dispatch _ ps = err $ "Unsupported operation [" ++ show ps ++ "]"

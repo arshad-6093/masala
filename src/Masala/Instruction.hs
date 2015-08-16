@@ -163,19 +163,20 @@ hexToWord8s prog = conv 0 [] prog
 
 -- | parse Word8s to bytecode rep.
 parse :: [Word8] -> [ByteCode]
-parse prog = inst [] . zip [0..] $ prog
-    where inst bcs [] = reverse bcs
-          inst bcs ((idx,v):ws) =
+parse prog = toBC [] . zip [0..] $ prog
+    where toBC bcs [] = reverse bcs
+          toBC bcs ((idx,v):ws) =
               case M.lookup v valueToInst of
                 Nothing -> err idx "Instruction expected"
                 Just i ->
                     case paramSpec (spec i) of
-                      Push n -> push idx n (Inst i:bcs) ws
-                      _ -> inst (Inst i:bcs) ws
-          push idx n bcs ws | n > length ws =
-                                err idx ("PUSH" ++show n ++ ": not enough input")
-                            | otherwise =
-                                inst (PushV (w8sToU256 $ map snd $ take n ws):bcs) (drop n ws)
+                      PushW n -> push i idx n bcs ws
+                      _ -> toBC (ByteCode idx i []:bcs) ws
+          push inst idx n bcs ws 
+              | n > length ws =
+                  err idx ("PUSH" ++show n ++ ": not enough input")
+              | otherwise =
+                  toBC (ByteCode idx inst (map snd $ take n ws):bcs) (drop n ws)
           err idx msg = error $ msg ++ " (index " ++ show idx ++
                         ", value " ++ show (prog !! idx) ++ ")"
 
@@ -192,31 +193,45 @@ w8sToU256 :: [Word8] -> U256
 w8sToU256 = fst. foldr acc (0,0)
     where acc v (t,p) = (t + shift (fromIntegral v) p, p + 8)
 
-data ByteCode =
-          Inst Instruction
-        | PushV U256
+u256ToW8s :: U256 -> [Word8]
+u256ToW8s 0 = [0]
+u256ToW8s u = w8 [] u
+    where w8 ws v | v > 0 = w8 (fromIntegral (v .&. 0xff):ws) (v `shiftR` 8)
+                  | otherwise = ws
+
+data ByteCode = ByteCode { bcIdx :: Int, bcInst :: Instruction, bcValue :: [Word8] }
           deriving (Eq)
 
-infixr 8 +>
+infixl 8 +>
 
 (+>) :: (ToByteCode a,ToByteCode b) => a -> b -> [ByteCode]
-a +> b = toByteCode a ++ toByteCode b
+a +> b = ba ++ setIdxs(toByteCode b) 
+    where ba = toByteCode a 
+          prevIdx = if null ba then 0 else idx . head $ reverse ba 
+          idx (ByteCode n _ w) = n + length w
+          setIdxs = map setIdx . zip [succ prevIdx..] 
+          setIdx (i,bc) = bc { bcIdx = i }
 
-wPUSH :: U256 -> [ByteCode]
-wPUSH = (Inst PUSH1:) . return . PushV
+wPUSH :: U256 -> ByteCode
+wPUSH v = ByteCode 0 selectPush ws
+    where ws = u256ToW8s v
+          selectPush = [pred PUSH1 ..] !! length ws
 
 class ToByteCode a where toByteCode :: a -> [ByteCode]
-instance ToByteCode Instruction where toByteCode = return . Inst
+instance ToByteCode Instruction where toByteCode i = return $ ByteCode 0 i []
 instance ToByteCode ByteCode where toByteCode = return
 instance ToByteCode [ByteCode] where toByteCode = id
 
+bcToWord8 :: ByteCode -> [Word8]
+bcToWord8 (ByteCode _ i []) = return $ value $ spec i
+bcToWord8 (ByteCode _ i ws) = value (spec i):ws
+
 instance Show ByteCode where
-    show (Inst i) = show i
-    show (PushV w) = show w
+    show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
 
 data ParamSpec =
           Empty
-        | Push Int
+        | PushW Int
         | Dup Int
         | Swap Int
         | Log Int
@@ -285,38 +300,38 @@ spec PC = Spec 0x58 0 1 Empty
 spec MSIZE = Spec 0x59 0 1 Empty
 spec GAS = Spec 0x5a 0 1 Empty
 spec JUMPDEST = Spec 0x5b 0 0 Empty
-spec PUSH1 =  Spec  96 0 1 (Push 1)
-spec PUSH2 =  Spec  97 0 1 (Push 2)
-spec PUSH3 =  Spec  98 0 1 (Push 3)
-spec PUSH4 =  Spec  99 0 1 (Push 4)
-spec PUSH5 =  Spec 100 0 1 (Push 5)
-spec PUSH6 =  Spec 101 0 1 (Push 6)
-spec PUSH7 =  Spec 102 0 1 (Push 7)
-spec PUSH8 =  Spec 103 0 1 (Push 8)
-spec PUSH9 =  Spec 104 0 1 (Push 9)
-spec PUSH10 = Spec 105 0 1 (Push 10)
-spec PUSH11 = Spec 106 0 1 (Push 11)
-spec PUSH12 = Spec 107 0 1 (Push 12)
-spec PUSH13 = Spec 108 0 1 (Push 13)
-spec PUSH14 = Spec 109 0 1 (Push 14)
-spec PUSH15 = Spec 110 0 1 (Push 15)
-spec PUSH16 = Spec 111 0 1 (Push 16)
-spec PUSH17 = Spec 112 0 1 (Push 17)
-spec PUSH18 = Spec 113 0 1 (Push 18)
-spec PUSH19 = Spec 114 0 1 (Push 19)
-spec PUSH20 = Spec 115 0 1 (Push 20)
-spec PUSH21 = Spec 116 0 1 (Push 21)
-spec PUSH22 = Spec 117 0 1 (Push 22)
-spec PUSH23 = Spec 118 0 1 (Push 23)
-spec PUSH24 = Spec 119 0 1 (Push 24)
-spec PUSH25 = Spec 120 0 1 (Push 25)
-spec PUSH26 = Spec 121 0 1 (Push 26)
-spec PUSH27 = Spec 122 0 1 (Push 27)
-spec PUSH28 = Spec 123 0 1 (Push 28)
-spec PUSH29 = Spec 124 0 1 (Push 29)
-spec PUSH30 = Spec 125 0 1 (Push 30)
-spec PUSH31 = Spec 126 0 1 (Push 31)
-spec PUSH32 = Spec 127 0 1 (Push 32)
+spec PUSH1 =  Spec  96 0 1 (PushW 1)
+spec PUSH2 =  Spec  97 0 1 (PushW 2)
+spec PUSH3 =  Spec  98 0 1 (PushW 3)
+spec PUSH4 =  Spec  99 0 1 (PushW 4)
+spec PUSH5 =  Spec 100 0 1 (PushW 5)
+spec PUSH6 =  Spec 101 0 1 (PushW 6)
+spec PUSH7 =  Spec 102 0 1 (PushW 7)
+spec PUSH8 =  Spec 103 0 1 (PushW 8)
+spec PUSH9 =  Spec 104 0 1 (PushW 9)
+spec PUSH10 = Spec 105 0 1 (PushW 10)
+spec PUSH11 = Spec 106 0 1 (PushW 11)
+spec PUSH12 = Spec 107 0 1 (PushW 12)
+spec PUSH13 = Spec 108 0 1 (PushW 13)
+spec PUSH14 = Spec 109 0 1 (PushW 14)
+spec PUSH15 = Spec 110 0 1 (PushW 15)
+spec PUSH16 = Spec 111 0 1 (PushW 16)
+spec PUSH17 = Spec 112 0 1 (PushW 17)
+spec PUSH18 = Spec 113 0 1 (PushW 18)
+spec PUSH19 = Spec 114 0 1 (PushW 19)
+spec PUSH20 = Spec 115 0 1 (PushW 20)
+spec PUSH21 = Spec 116 0 1 (PushW 21)
+spec PUSH22 = Spec 117 0 1 (PushW 22)
+spec PUSH23 = Spec 118 0 1 (PushW 23)
+spec PUSH24 = Spec 119 0 1 (PushW 24)
+spec PUSH25 = Spec 120 0 1 (PushW 25)
+spec PUSH26 = Spec 121 0 1 (PushW 26)
+spec PUSH27 = Spec 122 0 1 (PushW 27)
+spec PUSH28 = Spec 123 0 1 (PushW 28)
+spec PUSH29 = Spec 124 0 1 (PushW 29)
+spec PUSH30 = Spec 125 0 1 (PushW 30)
+spec PUSH31 = Spec 126 0 1 (PushW 31)
+spec PUSH32 = Spec 127 0 1 (PushW 32)
 spec DUP1 = Spec 128 0 1 (Dup 1)
 spec DUP2 = Spec 129 0 1 (Dup 2)
 spec DUP3 = Spec 130 0 1 (Dup 3)
