@@ -2,23 +2,17 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE KindSignatures #-}
 
 module Masala.VM where
 
-import Data.DoubleWord
 import Data.Bits
 import Data.Word
-import GHC.Generics
 import Control.Monad.Reader
-import Control.Monad.State.Strict hiding (set)
+import Control.Monad.State.Strict
 import Control.Lens
 import Masala.Instruction
-import Masala.Gas
 import Control.Monad.Error
 import qualified Data.Vector as V
 import Control.Applicative
@@ -27,7 +21,6 @@ import Numeric
 import Data.Char (intToDigit)
 import qualified Data.Map.Strict as M
 import Data.Maybe
-import qualified Data.List as L
 import Data.Monoid
 
 
@@ -46,9 +39,14 @@ data VMState e = VMState {
     , _ext :: e
 } deriving (Eq,Show)
 
+data ExtAccount = ExtAccount {
+      acctCode :: [Word8]
+    } deriving (Eq,Show)
+
 data Ext e = Ext {
       xStore :: U256 -> U256 -> e -> e
     , xLoad :: U256 -> e -> Maybe U256
+    , xAddress :: U256 -> e -> Maybe ExtAccount
 }
 
 data Env e = Env {
@@ -91,8 +89,8 @@ ext f s = fmap (\a -> s { _ext = a }) (f $ _ext s)
 
 
 toProg :: [ByteCode] -> Prog
-toProg bc = Prog (V.fromList bc) (M.fromList (map idx (zip [0..] bc)))
-    where idx (c,b@(ByteCode n i _)) = (fromIntegral n,c)
+toProg bc = Prog (V.fromList bc) (M.fromList (zipWith idx [0..] bc))
+    where idx c (ByteCode n _ _) = (fromIntegral n,c)
 
 
 push :: (VM m e) => U256 -> m ()
@@ -161,15 +159,26 @@ run_ :: String -> IO (Either String Output)
 run_ = runBC_ . parseHex
 
 runBC_ :: ToByteCode a => [a] -> IO (Either String Output)
-runBC_ bc = runVM M.empty
+runBC_ bc = runVM (TestExtData M.empty M.empty)
             (Env True (V.fromList [1,2,3,4,5]) testExt
              (toProg (concatMap toByteCode bc))
              0 0 0 0 0 0 0 0 0 0 0 0 0)
 
-testExt :: Ext (M.Map U256 U256)
+data TestExtData = TestExtData {
+      _edStore :: M.Map U256 U256
+    , _edAccts :: M.Map U256 ExtAccount
+} deriving (Eq,Show)
+
+edStore :: Lens' TestExtData (M.Map U256 U256)
+edStore f s = fmap (\a -> s { _edStore = a }) (f $ _edStore s)
+edAccts :: Lens' TestExtData (M.Map U256 ExtAccount)
+edAccts f s = fmap (\a -> s { _edAccts = a }) (f $ _edAccts s)
+
+testExt :: Ext TestExtData
 testExt = Ext {
-            xStore = M.insert
-          , xLoad = M.lookup
+            xStore = \k v -> over edStore (M.insert k v)
+          , xLoad = \k -> firstOf (edStore . ix k)
+          , xAddress = \k -> firstOf (edAccts . ix k)
           }
 
 
@@ -185,7 +194,7 @@ exec = do
   when d $ debugOut bc svals
   if null ws 
   then dispatch i (pspec,svals)
-  else push (w8sToU256 ws) >> next
+  else mapM_ push (w8sToU256s ws) >> next
     
 
 debugOut :: (Show e, VM m e) => ByteCode -> [U256] -> m ()
@@ -270,6 +279,14 @@ sstore a b = do
   f <- xStore <$> reader extApi
   ext %= f a b
 
+toAddy :: U256 -> U256
+toAddy = (`mod` (2 ^ (160 :: Int)))
+
+addy :: VM m e => U256 -> m (Maybe ExtAccount)
+addy k = do
+  f <- xAddress <$> reader extApi
+  f (toAddy k) <$> use ext 
+
 copyMem :: VM m e => U256 -> Int -> Int -> V.Vector U256 -> m ()
 copyMem memloc off len v
     | V.length v < off + len = return ()
@@ -286,6 +303,10 @@ jump j = do
   case bc of
     Nothing -> err $ "jump: invalid address " ++ show j
     Just c -> return (Jump c) 
+
+codeCopy :: VM m e => U256 -> Int -> Int -> [Word8] -> m ()
+codeCopy memloc codeoff len codes = copyMem memloc 0 (V.length us) us
+    where us = V.fromList . w8sToU256s . take len . drop codeoff $ codes
             
         
 
@@ -320,15 +341,19 @@ dispatch BALANCE _ = err "TODO"
 dispatch ORIGIN _ = reader origin >>= push >> next
 dispatch CALLER _ = reader caller >>= push >> next
 dispatch CALLVALUE _ = reader callValue >>= push >> next
-dispatch CALLDATALOAD (_,[a]) = fromMaybe 0 . (V.!? fromIntegral a) <$> reader callData >>= push >> next
+dispatch CALLDATALOAD (_,[a]) = fromMaybe 0 . (V.!? fromIntegral a) <$> reader callData >>= 
+                                push >> next
 dispatch CALLDATASIZE _ = fromIntegral . V.length <$> reader callData >>= push >> next
 dispatch CALLDATACOPY (_,[a,b,c]) = reader callData >>=
                                     copyMem a (fromIntegral b) (fromIntegral c) >> next
 dispatch CODESIZE _ = fromIntegral . V.length . code <$> reader prog >>= push >> next
-dispatch CODECOPY _ = err "TODO"
+dispatch CODECOPY (_,[a,b,c]) = bcsToWord8s . V.toList . code <$> reader prog >>= 
+                                codeCopy a (fromIntegral b) (fromIntegral c) >> next
 dispatch GASPRICE _ = reader gasPrice >>= push >> next
-dispatch EXTCODESIZE _ = err "TODO"
-dispatch EXTCODECOPY _ = err "TODO"
+dispatch EXTCODESIZE (_,[a]) = maybe 0 (fromIntegral . length . acctCode) <$> addy a >>= 
+                               push >> next
+dispatch EXTCODECOPY (_,[a,b,c,d]) = maybe (bcsToWord8s $ toByteCode STOP) acctCode <$> addy a >>= 
+                                     codeCopy b (fromIntegral c) (fromIntegral d) >> next 
 dispatch BLOCKHASH _ = err "TODO"
 dispatch COINBASE _ = reader coinbase >>= push >> next
 dispatch TIMESTAMP _ = reader timestamp >>= push >> next

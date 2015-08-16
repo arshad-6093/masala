@@ -189,9 +189,10 @@ type U256 = Word256
 type S256 = Int256
 
 
-w8sToU256 :: [Word8] -> U256
-w8sToU256 = fst. foldr acc (0,0)
-    where acc v (t,p) = (t + shift (fromIntegral v) p, p + 8)
+w8sToU256s :: [Word8] -> [U256]
+w8sToU256s = fst. foldr acc ([0],0)
+    where acc v (t:ts,p) | p < 256 = (t + shift (fromIntegral v) p:ts, p + 8)
+                         | otherwise = acc v (0:t:ts,0)
 
 u256ToW8s :: U256 -> [Word8]
 u256ToW8s 0 = [0]
@@ -222,9 +223,12 @@ instance ToByteCode Instruction where toByteCode i = return $ ByteCode 0 i []
 instance ToByteCode ByteCode where toByteCode = return
 instance ToByteCode [ByteCode] where toByteCode = id
 
-bcToWord8 :: ByteCode -> [Word8]
-bcToWord8 (ByteCode _ i []) = return $ value $ spec i
-bcToWord8 (ByteCode _ i ws) = value (spec i):ws
+bcToWord8s :: ByteCode -> [Word8]
+bcToWord8s (ByteCode _ i []) = return $ value $ spec i
+bcToWord8s (ByteCode _ i ws) = value (spec i):ws
+
+bcsToWord8s :: [ByteCode] -> [Word8]
+bcsToWord8s = concatMap bcToWord8s
 
 instance Show ByteCode where
     show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
