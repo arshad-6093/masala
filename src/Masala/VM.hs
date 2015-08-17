@@ -152,16 +152,32 @@ forward = do
     ctr .= c + 1
     return True
 
+emptyState :: e -> VMState e
+emptyState e = VMState [] 0 M.empty e 0
 
 runVM :: (MonadIO m, Functor m, Show ext) => ext -> Env ext -> m (Either String (Output ext))
-runVM extState env = do
-  r <- evalStateT (runReaderT (runErrorT stepVM) env)
-                     (VMState [] 0 M.empty extState 0)
-  case r of
-    (Left _) -> return r
-    (Right (Final {})) -> return r
-    (Right (Call g addr codeAddr glimit cdata memoff memlen vm)) -> 
-        do undefined
+runVM extState env = go (emptyState extState) env
+    where go vms e = do
+            r <- evalStateT (runReaderT (runErrorT stepVM) e) vms
+            case r of
+              (Left _) -> return r
+              (Right (Final {})) -> return r
+              (Right (Call g addr codeAddr glimit cdata memoff memlen vm)) -> 
+                  do 
+                    let es = _ext vm
+                        vms' = emptyState es
+                        lkpAcct = xAddress (extApi env)
+                        recip = lkpAcct addr es
+                        code = fmap acctCode $ lkpAcct codeAddr es
+                    case (recip,code) of
+                      (Just r', Just c') -> do
+                         -- TODO calldata, gaslimit
+                         let env' = e {
+                                      prog = toProg (parse c')
+                                    , acct = r'
+                                    , caller = addr }
+                         go vms' env'
+          
           
           
 
