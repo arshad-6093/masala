@@ -25,8 +25,10 @@ import Data.Monoid
 
 
 data Prog = Prog {
-      code :: V.Vector ByteCode
-    , codeMap :: M.Map U256 Int
+      -- parsed bytecode
+      pCode :: V.Vector ByteCode
+      -- map of valid codepoints to pCode indexesx
+    , pCodeMap :: M.Map U256 Int
 }
 
 type Stack = [U256]
@@ -40,17 +42,50 @@ data VMState e = VMState {
     , _gas :: U256
 } deriving (Eq,Show)
 
+stack :: Lens' (VMState e) Stack
+stack f s = fmap (\a -> s { _stack = a }) (f $ _stack s)
+ctr :: Lens' (VMState e) Ctr
+ctr f s = fmap (\a -> s { _ctr = a }) (f $ _ctr s)
+mem :: Lens' (VMState e) Mem
+mem f s = fmap (\a -> s { _mem = a }) (f $ _mem s)
+ext :: Lens' (VMState e) e
+ext f s = fmap (\a -> s { _ext = a }) (f $ _ext s)
+gas :: Lens' (VMState e) U256
+gas f s = fmap (\a -> s { _gas = a }) (f $ _gas s)
+
 data ExtAccount = ExtAccount {
-      acctCode :: [Word8]
-    , acctBalance :: U256
-    , acctAddress :: U256
+      _acctCode :: [Word8]
+    , _acctBalance :: U256
+    , _acctAddress :: U256
+    , _acctStore :: M.Map U256 U256
     } deriving (Eq,Show)
 
+acctStore :: Lens' ExtAccount (M.Map U256 U256)
+acctStore f s = fmap (\a -> s { _acctStore = a }) (f $ _acctStore s)
+acctCode :: Lens' ExtAccount [Word8]
+acctCode f s = fmap (\a -> s { _acctCode = a }) (f $ _acctCode s)
+acctBalance :: Lens' ExtAccount U256
+acctBalance f s = fmap (\a -> s { _acctBalance = a }) (f $ _acctBalance s)
+acctAddress :: Lens' ExtAccount U256
+acctAddress f s = fmap (\a -> s { _acctAddress = a }) (f $ _acctAddress s)
+
+
 data Ext e = Ext {
-      xStore :: U256 -> U256 -> e -> e
-    , xLoad :: U256 -> e -> Maybe U256
+      xStore :: U256 -> U256 -> U256 -> e -> e
+    , xLoad :: U256 -> U256 -> e -> Maybe U256
     , xAddress :: U256 -> e -> Maybe ExtAccount
+    , xCreate :: U256 -> e -> (ExtAccount,e)
+    , xSaveCode :: U256 -> [Word8] -> e -> e
 }
+
+
+
+data Resume e = Resume {
+      rPush :: U256,
+      rResult ::[Word8],
+      rAction :: CallAction,
+      rExt :: e
+    }
 
 
 data Env e = Env {
@@ -58,25 +93,31 @@ data Env e = Env {
     , callData :: V.Vector U256
     , extApi :: Ext e
     , prog :: Prog
-    , acct :: ExtAccount
-    , origin, caller :: U256
-    , envGas, gasPrice, callValue :: U256
-    , prevHash, coinbase, timestamp :: U256
-    , number, difficulty, gaslimit :: U256
+    , address :: U256
+    , origin :: U256
+    , caller :: U256
+    , envGas :: U256
+    , gasPrice :: U256
+    , callValue :: U256
+    , prevHash :: U256
+    , coinbase :: U256
+    , timestamp :: U256
+    , number :: U256
+    , difficulty :: U256
+    , gaslimit :: U256
 }
 
-
+data CallAction = SaveMem U256 Int | SaveCode U256 deriving (Eq,Show)
 
 data VMResult =
     Final { fReturn :: [Word8] }
         | Call {
             cGas :: U256,
-            cAddy :: U256,
-            cCode :: U256,
+            cAcct :: ExtAccount,
+            cCode :: [Word8],
             cGasLimit :: U256,
             cData :: [U256],
-            cMemOff :: U256,
-            cMemLen :: Int }
+            cAction :: CallAction }
           deriving (Eq,Show)
 
 type Output e = (VMResult, VMState e)
@@ -97,16 +138,6 @@ data ControlFlow e =
         | Yield VMResult
     deriving (Show)
 
-stack :: Lens' (VMState e) Stack
-stack f s = fmap (\a -> s { _stack = a }) (f $ _stack s)
-ctr :: Lens' (VMState e) Ctr
-ctr f s = fmap (\a -> s { _ctr = a }) (f $ _ctr s)
-mem :: Lens' (VMState e) Mem
-mem f s = fmap (\a -> s { _mem = a }) (f $ _mem s)
-ext :: Lens' (VMState e) e
-ext f s = fmap (\a -> s { _ext = a }) (f $ _ext s)
-gas :: Lens' (VMState e) U256
-gas f s = fmap (\a -> s { _gas = a }) (f $ _gas s)
 
 
 toProg :: [ByteCode] -> Prog
@@ -165,34 +196,21 @@ postEx :: (MonadIO m, Functor m, Show ext) =>
           Env ext -> Either String (Output ext) -> m (Either String (Output ext))
 postEx _ l@(Left _) = return l
 postEx _ r@(Right (Final {},_)) = return r
-postEx env (Right (Call g addr codeAddr glimit cdata memoff memlen, vm)) = do
+postEx env (Right (Call g addr codes glimit cdata action, vm)) = do
   let es = _ext vm
-      lkpAcct a msg = maybe (Left $ msg ++ ": invalid address: " ++ show a) Right $
-                      xAddress (extApi env) a es
-      lookups = do
-        ra <- lkpAcct addr "recipient"
-        cs <- acctCode <$> lkpAcct codeAddr "code"
-        return (ra,cs)
-  r <- case lookups of
-         Left s -> return $ Left $ "Call failed: " ++ s
-         Right (recp, codes) ->
-             do
-               let env' = env {
-                            prog = toProg (parse codes)
-                          , acct = recp
-                          , caller = addr
-                          , callData = V.fromList cdata
-                          }
-               runVM (emptyState es) env' Nothing
+      env' = env {
+               prog = toProg (parse codes)
+             , address = _acctAddress addr
+             , caller = address env
+             , callData = V.fromList cdata
+             }
+  r <- runVM (emptyState es) env' Nothing
   case r of
     Left _ -> return r
     (Right (Call {},_)) -> return $ Left $ "VM error: Call returned from 'runVM': " ++ show r
     (Right (Final o,vm')) ->
-           runVM vm env (Just $ Resume 1 o memoff memlen (_ext vm'))
+           runVM vm env (Just $ Resume 1 o action (_ext vm'))
 
-
-
-data Resume e = Resume { rPush :: U256, rResult ::[Word8], rMemloc :: U256, rMemlen :: Int, rExt :: e }
 
 stepVM :: (Show e, VM m e) => Maybe (Resume e) -> m VMResult
 stepVM r = do
@@ -203,9 +221,13 @@ stepVM r = do
            return (Final ws)
   cf <- case r of
           Nothing -> exec
-          (Just (Resume p result loc len e)) -> do
+          (Just (Resume p result action e)) -> do
               ext .= e
-              mstores loc 0 len (V.fromList $ w8sToU256s result)
+              case action of
+                SaveMem loc len -> mstores loc 0 len (V.fromList $ w8sToU256s result)
+                SaveCode addr -> do
+                            f <- xSaveCode <$> reader extApi
+                            ext %= f addr result
               push p
               return Next
   case cf of
@@ -232,31 +254,34 @@ runBC_ :: ToByteCode a => [a] -> IO (Either String (Output TestExtData))
 runBC_ bc = runVM (emptyState ex)
             (Env dbug calldata testExt
              (toProg tbc)
-             acc
+             (_acctAddress acc)
              addr
              addr
              0 0 0 0 0 0 0 0 0)
             Nothing
     where tbc = concatMap toByteCode bc
           addr = 123456
-          acc = ExtAccount (bcsToWord8s tbc) 0 addr
-          ex = TestExtData M.empty (M.fromList [(addr,acc)])
+          acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
+          ex = TestExtData (M.fromList [(addr,acc)])
           calldata = V.fromList [0,1,2,3,4]
           dbug = True
           testExt :: Ext TestExtData
           testExt = Ext {
-                      xStore = \k v -> over edStore (M.insert k v)
-                    , xLoad = \k -> firstOf (edStore . ix k)
+                      xStore = \a k v -> over (edAccts . ix a . acctStore) (M.insert k v)
+                    , xLoad = \a k -> firstOf (edAccts . ix a . acctStore . ix k)
                     , xAddress = \k -> firstOf (edAccts . ix k)
+                    , xCreate = \g e ->
+                                let newaddy = succ (maximum (M.keys (view edAccts e)))
+                                    newacct = ExtAccount [] newaddy g M.empty
+                                    e' = over edAccts (M.insert newaddy newacct) e
+                                in (newacct,e')
+                    , xSaveCode = \a ws -> set (edAccts . ix a . acctCode) ws
                     }
 
 data TestExtData = TestExtData {
-      _edStore :: M.Map U256 U256
-    , _edAccts :: M.Map U256 ExtAccount
+    _edAccts :: M.Map U256 ExtAccount
 } deriving (Eq,Show)
 
-edStore :: Lens' TestExtData (M.Map U256 U256)
-edStore f s = fmap (\a -> s { _edStore = a }) (f $ _edStore s)
 edAccts :: Lens' TestExtData (M.Map U256 ExtAccount)
 edAccts f s = fmap (\a -> s { _edAccts = a }) (f $ _edAccts s)
 
@@ -364,13 +389,15 @@ mstores' memloc off len v =
 
 sload :: VM m e => U256 -> m U256
 sload i = do
+  s <- reader address
   f <- xLoad <$> reader extApi
-  fromMaybe 0 . f i <$> use ext
+  fromMaybe 0 . f s i <$> use ext
 
 sstore :: VM m e => U256 -> U256 -> m ()
 sstore a b = do
+  s <- reader address
   f <- xStore <$> reader extApi
-  ext %= f a b
+  ext %= f s a b
 
 toAddy :: U256 -> U256
 toAddy = (`mod` (2 ^ (160 :: Int)))
@@ -386,7 +413,7 @@ int = fromIntegral
 
 jump :: VM m e => U256 -> m (ControlFlow e)
 jump j = do
-  bc <- M.lookup j . codeMap <$> reader prog
+  bc <- M.lookup j . pCodeMap <$> reader prog
   case bc of
     Nothing -> err $ "jump: invalid address " ++ show j
     Just c -> return (Jump c)
@@ -395,12 +422,31 @@ codeCopy :: VM m e => U256 -> Int -> Int -> [Word8] -> m ()
 codeCopy memloc codeoff len codes = mstores memloc 0 (V.length us) us
     where us = V.fromList . w8sToU256s . take len . drop codeoff $ codes
 
+lookupAcct :: VM m e => String -> U256 -> m ExtAccount
+lookupAcct msg addr = do
+  lf <- xAddress <$> reader extApi
+  l <- lf addr <$> use ext
+  maybe (throwError $ msg ++ ": " ++ show addr) return l
+
 doCall :: VM m e => U256 -> U256 -> U256 -> U256 ->
           U256 -> U256 -> U256 -> Int -> m (ControlFlow e)
-doCall gas addr codeAddr gaslimit inoff inlen outoff outlen = do
+doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
   d <- mloads inoff inlen
-  return $ Yield Call { cGas = gas, cAddy = addr, cCode = codeAddr, cGasLimit = gaslimit,
-                        cData = d, cMemOff = outoff, cMemLen = outlen }
+  codes <- view acctCode <$> lookupAcct "doCall: invalid code acct" codeAddr
+  acct <- lookupAcct "doCall: invalid recipient acct" addr
+  return $ Yield Call { cGas = cgas, cAcct = acct, cCode = codes, cGasLimit = cgaslimit,
+                              cData = d, cAction = SaveMem outoff outlen }
+
+
+create :: VM m e => U256 -> U256 -> U256 -> m (ControlFlow e)
+create cgas codeloc codeoff = do
+  codes <- concatMap u256ToW8s <$> mloads codeloc codeoff
+  createf <- xCreate <$> reader extApi
+  (newaddy,ext') <- createf cgas <$> use ext
+  ext .= ext'
+  gl <- reader gaslimit
+  return  $ Yield Call { cGas = cgas, cAcct = newaddy, cCode = codes, cGasLimit = gl,
+                         cData = [], cAction = SaveCode (view acctAddress newaddy) }
 
 dispatch :: VM m e => Instruction -> (ParamSpec,[U256]) -> m (ControlFlow e)
 dispatch STOP _ = return Stop
@@ -427,8 +473,8 @@ dispatch XOR (_,[a,b]) = push (a `xor` b) >> next
 dispatch NOT (_,[a]) = push (complement a) >> next
 dispatch BYTE (_,[a,b]) = push (int a `byte` b) >> next
 dispatch SHA3 _ = err "TODO"
-dispatch ADDRESS _ = acctAddress <$> reader acct >>= push >> next
-dispatch BALANCE (_,[a]) = maybe 0 acctBalance <$> addy a >>= push >> next
+dispatch ADDRESS _ = reader address >>= push >> next
+dispatch BALANCE (_,[a]) = maybe 0 (view acctBalance) <$> addy a >>= push >> next
 dispatch ORIGIN _ = reader origin >>= push >> next
 dispatch CALLER _ = reader caller >>= push >> next
 dispatch CALLVALUE _ = reader callValue >>= push >> next
@@ -437,13 +483,13 @@ dispatch CALLDATALOAD (_,[a]) = fromMaybe 0 . (V.!? int a) <$> reader callData >
 dispatch CALLDATASIZE _ = fromIntegral . V.length <$> reader callData >>= push >> next
 dispatch CALLDATACOPY (_,[a,b,c]) = reader callData >>=
                                     mstores a (int b) (int c) >> next
-dispatch CODESIZE _ = fromIntegral . V.length . code <$> reader prog >>= push >> next
-dispatch CODECOPY (_,[a,b,c]) = bcsToWord8s . V.toList . code <$> reader prog >>=
+dispatch CODESIZE _ = fromIntegral . V.length . pCode <$> reader prog >>= push >> next
+dispatch CODECOPY (_,[a,b,c]) = bcsToWord8s . V.toList . pCode <$> reader prog >>=
                                 codeCopy a (int b) (int c) >> next
 dispatch GASPRICE _ = reader gasPrice >>= push >> next
-dispatch EXTCODESIZE (_,[a]) = maybe 0 (fromIntegral . length . acctCode) <$> addy a >>=
+dispatch EXTCODESIZE (_,[a]) = maybe 0 (fromIntegral . length . view acctCode) <$> addy a >>=
                                push >> next
-dispatch EXTCODECOPY (_,[a,b,c,d]) = maybe (bcsToWord8s $ toByteCode STOP) acctCode <$> addy a >>=
+dispatch EXTCODECOPY (_,[a,b,c,d]) = maybe (bcsToWord8s $ toByteCode STOP) (view acctCode) <$> addy a >>=
                                      codeCopy b (int c) (int d) >> next
 dispatch BLOCKHASH _ = err "TODO"
 dispatch COINBASE _ = reader coinbase >>= push >> next
@@ -467,9 +513,9 @@ dispatch JUMPDEST _ = next -- per spec: "Mark a valid destination for jumps."
 dispatch _ (Dup n,_) = dup n >> next
 dispatch _ (Swap n,_) = swap n >> next
 dispatch _ (Log n,_) = log n >> next
-dispatch CREATE _ = err "TODO"
+dispatch CREATE (_,[a,b,c]) = create a b (fromIntegral c)
 dispatch CALL (_,[g,t,gl,io,il,oo,ol]) = doCall g t t gl io il oo (int ol)
-dispatch CALLCODE (_,[g,t,gl,io,il,oo,ol]) = acctAddress <$> reader acct >>= \a ->
+dispatch CALLCODE (_,[g,t,gl,io,il,oo,ol]) = reader address >>= \a ->
                                              doCall g a t gl io il oo (int ol)
 dispatch RETURN (_,[a,b]) = Return . concatMap u256ToW8s <$> mloads (a `div` 32) (b `div` 32)
 dispatch SUICIDE _ = err "TODO"
