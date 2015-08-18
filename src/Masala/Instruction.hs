@@ -1,5 +1,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module Masala.Instruction where
 
@@ -172,7 +173,7 @@ parse prog = toBC [] . zip [0..] $ prog
                     case paramSpec (spec i) of
                       PushW n -> push i idx n bcs ws
                       _ -> toBC (ByteCode idx i []:bcs) ws
-          push inst idx n bcs ws 
+          push inst idx n bcs ws
               | n > length ws =
                   err idx ("PUSH" ++show n ++ ": not enough input")
               | otherwise =
@@ -206,19 +207,24 @@ data ByteCode = ByteCode { bcIdx :: Int, bcInst :: Instruction, bcValue :: [Word
 infixl 8 +>
 
 (+>) :: (ToByteCode a,ToByteCode b) => a -> b -> [ByteCode]
-a +> b = ba ++ setIdxs(toByteCode b) 
-    where ba = toByteCode a 
-          prevIdx = if null ba then 0 else idx . head $ reverse ba 
+a +> b = ba ++ setIdxs(toByteCode b)
+    where ba = toByteCode a
+          prevIdx = if null ba then 0 else idx . head $ reverse ba
           idx (ByteCode n _ w) = n + length w
-          setIdxs = map setIdx . zip [succ prevIdx..] 
-          setIdx (i,bc) = bc { bcIdx = i }
+          setIdxs = zipWith setIdx [succ prevIdx..]
+          setIdx i bc = bc { bcIdx = i }
 
 wPUSH :: U256 -> ByteCode
 wPUSH v = ByteCode 0 selectPush ws
     where ws = u256ToW8s v
           selectPush = [pred PUSH1 ..] !! length ws
 
-class ToByteCode a where toByteCode :: a -> [ByteCode]
+class ToByteCode a where
+    toByteCode :: a -> [ByteCode]
+    default toByteCode :: (Bits a ,Integral a) => a -> [ByteCode]
+    toByteCode a = return $ wPUSH $ fromIntegral a
+
+instance ToByteCode U256
 instance ToByteCode Instruction where toByteCode i = return $ ByteCode 0 i []
 instance ToByteCode ByteCode where toByteCode = return
 instance ToByteCode [ByteCode] where toByteCode = id
