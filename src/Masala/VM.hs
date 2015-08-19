@@ -22,6 +22,8 @@ import Data.Char (intToDigit)
 import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Monoid
+import Masala.Gas
+import qualified Data.Set as S
 
 
 data Prog = Prog {
@@ -39,7 +41,7 @@ data VMState e = VMState {
     , _ctr :: Ctr
     , _mem :: Mem
     , _ext :: e
-    , _gas :: U256
+    , _gas :: Gas
 } deriving (Eq,Show)
 
 stack :: Lens' (VMState e) Stack
@@ -50,12 +52,12 @@ mem :: Lens' (VMState e) Mem
 mem f s = fmap (\a -> s { _mem = a }) (f $ _mem s)
 ext :: Lens' (VMState e) e
 ext f s = fmap (\a -> s { _ext = a }) (f $ _ext s)
-gas :: Lens' (VMState e) U256
+gas :: Lens' (VMState e) Gas
 gas f s = fmap (\a -> s { _gas = a }) (f $ _gas s)
 
 data ExtAccount = ExtAccount {
       _acctCode :: [Word8]
-    , _acctBalance :: U256
+    , _acctBalance :: Gas
     , _acctAddress :: U256
     , _acctStore :: M.Map U256 U256
     } deriving (Eq,Show)
@@ -64,7 +66,7 @@ acctStore :: Lens' ExtAccount (M.Map U256 U256)
 acctStore f s = fmap (\a -> s { _acctStore = a }) (f $ _acctStore s)
 acctCode :: Lens' ExtAccount [Word8]
 acctCode f s = fmap (\a -> s { _acctCode = a }) (f $ _acctCode s)
-acctBalance :: Lens' ExtAccount U256
+acctBalance :: Lens' ExtAccount Gas
 acctBalance f s = fmap (\a -> s { _acctBalance = a }) (f $ _acctBalance s)
 acctAddress :: Lens' ExtAccount U256
 acctAddress f s = fmap (\a -> s { _acctAddress = a }) (f $ _acctAddress s)
@@ -74,8 +76,11 @@ data Ext e = Ext {
       xStore :: U256 -> U256 -> U256 -> e -> e
     , xLoad :: U256 -> U256 -> e -> Maybe U256
     , xAddress :: U256 -> e -> Maybe ExtAccount
-    , xCreate :: U256 -> e -> (ExtAccount,e)
+    , xCreate :: Gas -> e -> (ExtAccount,e)
     , xSaveCode :: U256 -> [Word8] -> e -> e
+    , xSuicide :: U256 -> e -> (Bool, e)
+    , xRefund :: Gas -> e -> e
+    , xIsCreate :: U256 -> e -> Bool
 }
 
 
@@ -85,7 +90,7 @@ data Resume e = Resume {
       rResult ::[Word8],
       rAction :: CallAction,
       rExt :: e
-    }
+    } deriving (Eq,Show)
 
 
 data Env e = Env {
@@ -104,7 +109,7 @@ data Env e = Env {
     , timestamp :: U256
     , number :: U256
     , difficulty :: U256
-    , gaslimit :: U256
+    , gaslimit :: Gas
 }
 
 data CallAction = SaveMem U256 Int | SaveCode U256 deriving (Eq,Show)
@@ -112,10 +117,10 @@ data CallAction = SaveMem U256 Int | SaveCode U256 deriving (Eq,Show)
 data VMResult =
     Final { fReturn :: [Word8] }
         | Call {
-            cGas :: U256,
+            cGas :: Gas,
             cAcct :: ExtAccount,
             cCode :: [Word8],
-            cGasLimit :: U256,
+            cGasLimit :: Gas,
             cData :: [U256],
             cAction :: CallAction }
           deriving (Eq,Show)
@@ -183,8 +188,8 @@ forward = do
     ctr .= c + 1
     return True
 
-emptyState :: e -> VMState e
-emptyState e = VMState [] 0 M.empty e 0
+emptyState :: e -> Gas -> VMState e
+emptyState = VMState [] 0 M.empty
 
 runVM :: (MonadIO m, Functor m, Show ext) =>
          VMState ext -> Env ext -> Maybe (Resume ext) -> m (Either String (Output ext))
@@ -204,7 +209,7 @@ postEx env (Right (Call g addr codes glimit cdata action, vm)) = do
              , caller = address env
              , callData = V.fromList cdata
              }
-  r <- runVM (emptyState es) env' Nothing
+  r <- runVM (emptyState es (fromIntegral g)) env' Nothing
   case r of
     Left _ -> return r
     (Right (Call {},_)) -> return $ Left $ "VM error: Call returned from 'runVM': " ++ show r
@@ -215,13 +220,12 @@ postEx env (Right (Call g addr codes glimit cdata action, vm)) = do
 stepVM :: (Show e, VM m e) => Maybe (Resume e) -> m VMResult
 stepVM r = do
   let done ws = do
-           d <- reader debug
-           vm <- get
-           when d $ liftIO $ print vm
-           return (Final ws)
+             doDebug (get >>= liftIO . print)
+             return (Final ws)
   cf <- case r of
           Nothing -> exec
-          (Just (Resume p result action e)) -> do
+          (Just rs@(Resume p result action e)) -> do
+              doDebug (liftIO $ putStrLn $ "Resume: " ++ show rs)
               ext .= e
               case action of
                 SaveMem loc len -> mstores loc 0 len (V.fromList $ w8sToU256s result)
@@ -242,48 +246,9 @@ stepVM r = do
     Stop -> done []
     Return ws -> done ws
     Yield call -> do
-            d <- reader debug
-            when d $ liftIO $ putStrLn $ "Yield: " ++ show call
-            return call
+             doDebug (liftIO $ putStrLn $ "Yield: " ++ show call)
+             return call
 
-
-run_ :: String -> IO (Either String (Output TestExtData))
-run_ = runBC_ . parseHex
-
-runBC_ :: ToByteCode a => [a] -> IO (Either String (Output TestExtData))
-runBC_ bc = runVM (emptyState ex)
-            (Env dbug calldata testExt
-             (toProg tbc)
-             (_acctAddress acc)
-             addr
-             addr
-             0 0 0 0 0 0 0 0 0)
-            Nothing
-    where tbc = concatMap toByteCode bc
-          addr = 123456
-          acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
-          ex = TestExtData (M.fromList [(addr,acc)])
-          calldata = V.fromList [0,1,2,3,4]
-          dbug = True
-          testExt :: Ext TestExtData
-          testExt = Ext {
-                      xStore = \a k v -> over (edAccts . ix a . acctStore) (M.insert k v)
-                    , xLoad = \a k -> firstOf (edAccts . ix a . acctStore . ix k)
-                    , xAddress = \k -> firstOf (edAccts . ix k)
-                    , xCreate = \g e ->
-                                let newaddy = succ (maximum (M.keys (view edAccts e)))
-                                    newacct = ExtAccount [] newaddy g M.empty
-                                    e' = over edAccts (M.insert newaddy newacct) e
-                                in (newacct,e')
-                    , xSaveCode = \a ws -> set (edAccts . ix a . acctCode) ws
-                    }
-
-data TestExtData = TestExtData {
-    _edAccts :: M.Map U256 ExtAccount
-} deriving (Eq,Show)
-
-edAccts :: Lens' TestExtData (M.Map U256 ExtAccount)
-edAccts f s = fmap (\a -> s { _edAccts = a }) (f $ _edAccts s)
 
 
 
@@ -296,12 +261,76 @@ exec = do
   bc@(ByteCode _ i ws) <- current
   let (Spec _ stackin _ pspec) = spec i
   svals <- pops stackin
-  d <- reader debug
-  when d $ debugOut bc svals
+  doDebug $ debugOut bc svals
+  handleGas i pspec svals
   if null ws
   then dispatch i (pspec,svals)
   else mapM_ push (w8sToU256s ws) >> next
 
+handleGas :: VM m e => Instruction -> ParamSpec -> [U256] -> m ()
+handleGas i ps svs = do
+  let (callg,a) = computeGas i (ps,svs)
+  calcg <- case a of
+            Nothing -> return 0
+            (Just c) -> case c of
+                        (MemSize sz) -> computeMemGas sz
+                        (StoreOp loc off) -> computeStoreGas loc off
+                        (GasCall sz addr) -> (+) <$> computeMemGas sz <*> computeCallGas addr
+  deductGas (calcg + callg)
+
+deductGas :: VM m e => Gas -> m ()
+deductGas total = do
+  pg <- use gas
+  let gas' = pg - total
+  if gas' < 0
+  then do
+    gas .= 0
+    throwError $ "Out of gas, gas=" ++ show pg ++
+                   ", required=" ++ show total ++
+                   ", balance= " ++ show gas'
+  else do
+    d <- reader debug
+    when d $ liftIO $ putStrLn $ "gas used: " ++ show total
+    gas .= gas'
+
+computeMemGas :: VM m e => U256 -> m Gas
+computeMemGas newSzBytes = do
+  let toWordSize v = (v + 31) `div` 32
+      newSzWords = fromIntegral $ toWordSize newSzBytes
+      fee s = ((s * s) `div` 512) + (s * gas_memory)
+  oldSzWords <- M.size <$> use mem
+  return $ if newSzWords > oldSzWords
+           then fee newSzWords - fee oldSzWords
+           else 0
+
+
+refund :: VM m e => Gas -> m ()
+refund g = do
+  f <- xRefund <$> reader extApi
+  ext %= f g
+
+computeStoreGas :: VM m e => U256 -> U256 -> m Gas
+computeStoreGas l v' = do
+  v <- mload l
+  if v == 0 && v' /= 0
+  then return gas_sset
+  else if v /= 0 && v' == 0
+       then refund gas_sclear >> return gas_sreset
+       else return gas_sreset
+
+
+computeCallGas :: VM m e => Maybe U256 -> m Gas
+computeCallGas Nothing = return 0
+computeCallGas (Just a) = do
+  f <- xIsCreate <$> reader extApi
+  isNew <- f a <$> use ext
+  return $ if isNew then gas_callnewaccount else 0
+
+
+doDebug :: VM m e => m () -> m ()
+doDebug a = do
+  d <- reader debug
+  when d a
 
 debugOut :: (Show e, VM m e) => ByteCode -> [U256] -> m ()
 debugOut i svals = do
@@ -386,7 +415,6 @@ mstores' memloc off len v =
     mappend (M.fromList . zip [memloc ..] . V.toList . V.slice off len $ v)
 
 
-
 sload :: VM m e => U256 -> m U256
 sload i = do
   s <- reader address
@@ -428,7 +456,7 @@ lookupAcct msg addr = do
   l <- lf addr <$> use ext
   maybe (throwError $ msg ++ ": " ++ show addr) return l
 
-doCall :: VM m e => U256 -> U256 -> U256 -> U256 ->
+doCall :: VM m e => Gas -> U256 -> U256 -> Gas ->
           U256 -> U256 -> U256 -> Int -> m (ControlFlow e)
 doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
   d <- mloads inoff inlen
@@ -438,15 +466,24 @@ doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
                               cData = d, cAction = SaveMem outoff outlen }
 
 
-create :: VM m e => U256 -> U256 -> U256 -> m (ControlFlow e)
+create :: VM m e => Gas -> U256 -> U256 -> m (ControlFlow e)
 create cgas codeloc codeoff = do
   codes <- concatMap u256ToW8s <$> mloads codeloc codeoff
   createf <- xCreate <$> reader extApi
   (newaddy,ext') <- createf cgas <$> use ext
   ext .= ext'
+  deductGas cgas
   gl <- reader gaslimit
   return  $ Yield Call { cGas = cgas, cAcct = newaddy, cCode = codes, cGasLimit = gl,
                          cData = [], cAction = SaveCode (view acctAddress newaddy) }
+
+suicide :: VM m e => U256 -> m (ControlFlow e)
+suicide addr = do
+  f <- xSuicide <$> reader extApi
+  (isNewSuicide,m') <- f addr <$> use ext
+  ext .= m'
+  when isNewSuicide $ refund gas_suicide
+  return Stop
 
 dispatch :: VM m e => Instruction -> (ParamSpec,[U256]) -> m (ControlFlow e)
 dispatch STOP _ = return Stop
@@ -474,7 +511,7 @@ dispatch NOT (_,[a]) = push (complement a) >> next
 dispatch BYTE (_,[a,b]) = push (int a `byte` b) >> next
 dispatch SHA3 _ = err "TODO"
 dispatch ADDRESS _ = reader address >>= push >> next
-dispatch BALANCE (_,[a]) = maybe 0 (view acctBalance) <$> addy a >>= push >> next
+dispatch BALANCE (_,[a]) = maybe 0 (fromIntegral . view acctBalance) <$> addy a >>= push >> next
 dispatch ORIGIN _ = reader origin >>= push >> next
 dispatch CALLER _ = reader caller >>= push >> next
 dispatch CALLVALUE _ = reader callValue >>= push >> next
@@ -496,7 +533,7 @@ dispatch COINBASE _ = reader coinbase >>= push >> next
 dispatch TIMESTAMP _ = reader timestamp >>= push >> next
 dispatch NUMBER _ = reader number >>= push >> next
 dispatch DIFFICULTY _ = reader difficulty >>= push >> next
-dispatch GASLIMIT _ = reader gaslimit >>= push >> next
+dispatch GASLIMIT _ = fromIntegral <$> reader gaslimit >>= push >> next
 dispatch POP _ = next -- exec already pops 1 per spec
 dispatch MLOAD (_,[a]) = mload a >>= push >> next
 dispatch MSTORE (_,[a,b]) = mstore a b >> next
@@ -507,16 +544,76 @@ dispatch JUMP (_,[a]) = jump a
 dispatch JUMPI (_,[a,b]) = if b /= 0 then jump a else next
 dispatch PC _ = fromIntegral <$> use ctr >>= push >> next
 dispatch MSIZE _ = fromIntegral . (* 8) . M.size <$> use mem >>= push >> next
-dispatch GAS _ = use gas >>= push >> next
+dispatch GAS _ = fromIntegral <$> use gas >>= push >> next
 dispatch JUMPDEST _ = next -- per spec: "Mark a valid destination for jumps."
                            -- "This operation has no effect on machine state during execution."
 dispatch _ (Dup n,_) = dup n >> next
 dispatch _ (Swap n,_) = swap n >> next
 dispatch _ (Log n,_) = log n >> next
-dispatch CREATE (_,[a,b,c]) = create a b (fromIntegral c)
-dispatch CALL (_,[g,t,gl,io,il,oo,ol]) = doCall g t t gl io il oo (int ol)
+dispatch CREATE (_,[a,b,c]) = create (fromIntegral a) b (fromIntegral c)
+dispatch CALL (_,[g,t,gl,io,il,oo,ol]) = doCall (fromIntegral g) t t (fromIntegral gl) io il oo (int ol)
 dispatch CALLCODE (_,[g,t,gl,io,il,oo,ol]) = reader address >>= \a ->
-                                             doCall g a t gl io il oo (int ol)
+                                             doCall (fromIntegral g) a t (fromIntegral gl) io il oo (int ol)
 dispatch RETURN (_,[a,b]) = Return . concatMap u256ToW8s <$> mloads (a `div` 32) (b `div` 32)
-dispatch SUICIDE _ = err "TODO"
+dispatch SUICIDE (_,[a]) = suicide a
 dispatch _ ps = err $ "Unsupported operation [" ++ show ps ++ "]"
+
+
+----
+-- TESTING
+----
+
+run_ :: String -> IO (Either String (Output TestExtData))
+run_ = runBC_ . parseHex
+
+runBC_ :: ToByteCode a => [a] -> IO (Either String (Output TestExtData))
+runBC_ bc = runVM (emptyState ex gas')
+            (Env dbug calldata testExt
+             (toProg tbc)
+             (_acctAddress acc)
+             addr
+             addr
+             0 0 0 0 0 0 0 0 0)
+            Nothing
+    where tbc = concatMap toByteCode bc
+          addr = 123456
+          gas' = 10000000
+          acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
+          ex = TestExtData (M.fromList [(addr,acc)]) S.empty S.empty 0
+          calldata = V.fromList [0,1,2,3,4]
+          dbug = True
+          testExt :: Ext TestExtData
+          testExt = Ext {
+                      xStore = \a k v -> over (edAccts . ix a . acctStore) (M.insert k v)
+                    , xLoad = \a k -> firstOf (edAccts . ix a . acctStore . ix k)
+                    , xAddress = \k -> firstOf (edAccts . ix k)
+                    , xCreate = \g e ->
+                                let newaddy = succ (maximum (M.keys (view edAccts e)))
+                                    newacct = ExtAccount [] g newaddy M.empty
+                                    e' = over edCreates (S.insert newaddy) .
+                                         over edAccts (M.insert newaddy newacct) $ e
+                                in (newacct,e')
+                    , xSaveCode = \a ws -> set (edAccts . ix a . acctCode) ws
+                    , xSuicide = \a e ->
+                                  let justDeleted = a `S.member` view edSuicides e
+                                      e' = over edSuicides (S.delete a) e
+                                  in (justDeleted,e')
+                    , xRefund = \a -> over edRefund (+ a)
+                    , xIsCreate = \a -> S.member a . view edCreates
+                    }
+
+data TestExtData = TestExtData {
+      _edAccts :: M.Map U256 ExtAccount
+    , _edSuicides :: S.Set U256
+    , _edCreates :: S.Set U256
+    , _edRefund :: Gas
+} deriving (Eq,Show)
+
+edAccts :: Lens' TestExtData (M.Map U256 ExtAccount)
+edAccts f s = fmap (\a -> s { _edAccts = a }) (f $ _edAccts s)
+edSuicides :: Lens' TestExtData (S.Set U256)
+edSuicides f s = fmap (\a -> s { _edSuicides = a }) (f $ _edSuicides s)
+edCreates :: Lens' TestExtData (S.Set U256)
+edCreates f s = fmap (\a -> s { _edCreates = a }) (f $ _edCreates s)
+edRefund :: Lens' TestExtData Gas
+edRefund f s = fmap (\a -> s { _edRefund = a }) (f $ _edRefund s)

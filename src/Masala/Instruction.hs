@@ -12,6 +12,44 @@ import Numeric
 import Data.DoubleWord
 import Data.Bits
 
+
+type U256 = Word256
+type S256 = Int256
+
+data ByteCode = ByteCode { bcIdx :: Int, bcInst :: Instruction, bcValue :: [Word8] }
+          deriving (Eq)
+instance Show ByteCode where
+    show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
+
+
+
+
+class ToByteCode a where
+    toByteCode :: a -> [ByteCode]
+    default toByteCode :: (Bits a ,Integral a) => a -> [ByteCode]
+    toByteCode a = return $ wPUSH $ fromIntegral a
+
+instance ToByteCode U256
+instance ToByteCode Instruction where toByteCode i = return $ ByteCode 0 i []
+instance ToByteCode ByteCode where toByteCode = return
+instance ToByteCode [ByteCode] where toByteCode = id
+
+data ParamSpec =
+          Empty
+        | PushW Int
+        | Dup Int
+        | Swap Int
+        | Log Int
+        deriving (Eq,Show)
+
+data Spec = Spec {
+      value :: Word8,
+      stackIn :: Int,
+      stackOut :: Int,
+      paramSpec :: ParamSpec
+    } deriving Show
+
+
  -- All instructions.
 data Instruction =
       STOP
@@ -186,10 +224,6 @@ parseHex :: String -> [ByteCode]
 parseHex = parse . hexToWord8s
 
 
-type U256 = Word256
-type S256 = Int256
-
-
 w8sToU256s :: [Word8] -> [U256]
 w8sToU256s = fst. foldr acc ([0],0)
     where acc v (t:ts,p) | p < 256 = (t + shift (fromIntegral v) p:ts, p + 8)
@@ -200,9 +234,6 @@ u256ToW8s 0 = [0]
 u256ToW8s u = w8 [] u
     where w8 ws v | v > 0 = w8 (fromIntegral (v .&. 0xff):ws) (v `shiftR` 8)
                   | otherwise = ws
-
-data ByteCode = ByteCode { bcIdx :: Int, bcInst :: Instruction, bcValue :: [Word8] }
-          deriving (Eq)
 
 infixl 8 +>
 
@@ -219,15 +250,6 @@ wPUSH v = ByteCode 0 selectPush ws
     where ws = u256ToW8s v
           selectPush = [pred PUSH1 ..] !! length ws
 
-class ToByteCode a where
-    toByteCode :: a -> [ByteCode]
-    default toByteCode :: (Bits a ,Integral a) => a -> [ByteCode]
-    toByteCode a = return $ wPUSH $ fromIntegral a
-
-instance ToByteCode U256
-instance ToByteCode Instruction where toByteCode i = return $ ByteCode 0 i []
-instance ToByteCode ByteCode where toByteCode = return
-instance ToByteCode [ByteCode] where toByteCode = id
 
 bcToWord8s :: ByteCode -> [Word8]
 bcToWord8s (ByteCode _ i []) = return $ value $ spec i
@@ -235,24 +257,6 @@ bcToWord8s (ByteCode _ i ws) = value (spec i):ws
 
 bcsToWord8s :: [ByteCode] -> [Word8]
 bcsToWord8s = concatMap bcToWord8s
-
-instance Show ByteCode where
-    show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
-
-data ParamSpec =
-          Empty
-        | PushW Int
-        | Dup Int
-        | Swap Int
-        | Log Int
-        deriving (Eq,Show)
-
-data Spec = Spec {
-      value :: Word8,
-      stackIn :: Int,
-      stackOut :: Int,
-      paramSpec :: ParamSpec
-    } deriving Show
 
 spec :: Instruction -> Spec
 spec STOP = Spec 0x00 0 0 Empty
