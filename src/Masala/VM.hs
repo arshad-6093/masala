@@ -62,7 +62,14 @@ data ExtAccount = ExtAccount {
     , _acctBalance :: Gas
     , _acctAddress :: U256
     , _acctStore :: M.Map U256 U256
-    } deriving (Eq,Show)
+    } deriving (Eq)
+
+instance Show ExtAccount where
+    show (ExtAccount c b a s) =
+        "ExtAccount {code=" ++ sc c ++ ", bal=" ++ show b ++ ", addy=" ++
+                         show a ++ ", store=" ++ show s
+            where sc [] = "[empty]"
+                  sc _ = "*bytecode*"
 
 acctStore :: Lens' ExtAccount (M.Map U256 U256)
 acctStore f s = fmap (\a -> s { _acctStore = a }) (f $ _acctStore s)
@@ -106,22 +113,19 @@ xfirstOf l = useExt $ firstOf l
 xview :: Getting b s b -> ExtOp s b
 xview l = view l <$> getExt
 
-xApply :: VM m e => (Ext e -> f) -> (f -> ExtOp e a) -> m a
-xApply acc g = do
-  f <- acc <$> reader extApi
-  (a,e) <- runExtOp (g f) <$> use ext
+infixl 4 <@$>
+(<@$>) :: VM m e => (Ext e -> x -> b) -> x -> m b
+acc <@$> a = do f <- acc <$> reader extApi; return $ f a
+
+infixl 4 <@*>
+(<@*>) :: VM m e => m (y -> c) -> y -> m c
+f <@*> b = f >>= \f' -> return $ f' b
+
+xRun :: VM m e => m (ExtOp e r) -> m r
+xRun v = do
+  (r,e) <- runExtOp <$> v <*> use ext
   ext .= e
-  return a
-
--- | work in progress to use applicative??
-appEx :: VM m e => (Env e -> a) -> m (ExtOp e a)
-appEx acc = pure <$> reader acc
-
-
-
-
-
-
+  return r
 
 data Ext e = Ext {
       xStore :: U256 -> U256 -> U256 -> ExtOp e ()
@@ -280,7 +284,7 @@ stepVM r = do
               ext .= e
               case action of
                 SaveMem loc len -> mstores loc 0 len (V.fromList $ w8sToU256s result)
-                SaveCode addr -> xApply xSaveCode (\f -> f addr result)
+                SaveCode addr -> xRun $ xSaveCode <@$> addr <@*> result
               push p
               return Next
   case cf of
@@ -354,9 +358,10 @@ computeMemGas newSzBytes = do
            then fee newSzWords - fee oldSzWords
            else 0
 
+infixl 4 `refund`
 
 refund :: VM m e => Gas -> m ()
-refund g = xApply xRefund ($ g)
+refund g = xRun $ xRefund <@$> g
 
 computeStoreGas :: VM m e => U256 -> U256 -> m Gas
 computeStoreGas l v' = do
@@ -371,7 +376,7 @@ computeStoreGas l v' = do
 computeCallGas :: VM m e => Maybe U256 -> m Gas
 computeCallGas Nothing = return 0
 computeCallGas (Just a) = do
-  isNew <- xApply xIsCreate ($ a)
+  isNew <- xRun $ xIsCreate <@$> a
   return $ if isNew then gas_callnewaccount else 0
 
 
@@ -466,18 +471,18 @@ mstores' memloc off len v =
 sload :: VM m e => U256 -> m U256
 sload i = do
   s <- reader address
-  fromMaybe 0 <$> xApply xLoad (\f -> f s i)
+  fromMaybe 0 <$> xRun (xLoad <@$> s <@*> i)
 
 sstore :: VM m e => U256 -> U256 -> m ()
 sstore a b = do
   s <- reader address
-  xApply xStore (\f -> f s a b)
+  xRun $ xStore <@$> s <@*> a <@*> b
 
 toAddy :: U256 -> U256
 toAddy = (`mod` (2 ^ (160 :: Int)))
 
 addy :: VM m e => U256 -> m (Maybe ExtAccount)
-addy k = xApply xAddress ($ toAddy k)
+addy k = xRun $ xAddress <@$> toAddy k
 
 
 int :: Integral a => a -> Int
@@ -496,7 +501,7 @@ codeCopy memloc codeoff len codes = mstores memloc 0 (V.length us) us
 
 lookupAcct :: VM m e => String -> U256 -> m ExtAccount
 lookupAcct msg addr = do
-  l <- xApply xAddress ($ addr)
+  l <- xRun $ xAddress <@$> addr
   maybe (throwError $ msg ++ ": " ++ show addr) return l
 
 doCall :: VM m e => Gas -> U256 -> U256 -> Gas ->
@@ -512,7 +517,7 @@ doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
 create :: VM m e => Gas -> U256 -> U256 -> m (ControlFlow e)
 create cgas codeloc codeoff = do
   codes <- concatMap u256ToW8s <$> mloads codeloc codeoff
-  newaddy <- xApply xCreate ($ cgas)
+  newaddy <- xRun $ xCreate <@$> cgas
   deductGas cgas
   gl <- reader gaslimit
   return  $ Yield Call { cGas = cgas, cAcct = newaddy, cCode = codes, cGasLimit = gl,
@@ -520,7 +525,7 @@ create cgas codeloc codeoff = do
 
 suicide :: VM m e => U256 -> m (ControlFlow e)
 suicide addr = do
-  isNewSuicide <- xApply xSuicide ($ addr)
+  isNewSuicide <- xRun $ xSuicide <@$> addr
   when isNewSuicide $ refund gas_suicide
   return Stop
 
