@@ -5,24 +5,21 @@
 module Masala.Instruction where
 
 import Data.Word
-
 import Prelude hiding (LT,GT,EQ)
 import qualified Data.Map as M
-import Numeric
+import Numeric as N
 import Data.DoubleWord
 import Data.Bits
-
+import Data.Char (intToDigit)
 
 type U256 = Word256
 type S256 = Int256
+
 
 data ByteCode = ByteCode { bcIdx :: Int, bcInst :: Instruction, bcValue :: [Word8] }
           deriving (Eq)
 instance Show ByteCode where
     show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
-
-
-
 
 class ToByteCode a where
     toByteCode :: a -> [ByteCode]
@@ -378,13 +375,19 @@ spec SWAP13 = Spec 156 0 1 (Swap 13)
 spec SWAP14 = Spec 157 0 1 (Swap 14)
 spec SWAP15 = Spec 158 0 1 (Swap 15)
 spec SWAP16 = Spec 159 0 1 (Swap 16)
-spec LOG0 = Spec 0xa0 0 1 (Log 0)
-spec LOG1 = Spec 0xa1 0 1 (Log 1)
-spec LOG2 = Spec 0xa2 0 1 (Log 2)
-spec LOG3 = Spec 0xa3 0 1 (Log 3)
-spec LOG4 = Spec 0xa4 0 1 (Log 4)
+spec LOG0 = Spec 0xa0 2 1 (Log 0)
+spec LOG1 = Spec 0xa1 3 1 (Log 1)
+spec LOG2 = Spec 0xa2 4 1 (Log 2)
+spec LOG3 = Spec 0xa3 5 1 (Log 3)
+spec LOG4 = Spec 0xa4 6 1 (Log 4)
 spec CREATE = Spec 0xf0 3 1 Empty
 spec CALL = Spec 0xf1 7 1 Empty
 spec CALLCODE = Spec 0xf2 7 1 Empty
 spec RETURN = Spec 0xf3 2 0 Empty
 spec SUICIDE = Spec 0xff 1 0 Empty
+
+
+showBinary :: (Show a, Integral a) => a -> String
+showBinary i = showIntAtBase 2 intToDigit i ""
+
+showHex = (`N.showHex` "")
