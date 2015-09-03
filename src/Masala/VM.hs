@@ -56,17 +56,21 @@ postEx :: (MonadIO m, Functor m, Show ext) =>
 postEx _ l@(Left _) = return l
 postEx _ r@(Right (Final {},_)) = return r
 postEx env (Right (Call g addr codes _glimit cdata action, vm)) = do
-  let es = view ext vm
-      env' = set prog (toProg (parse codes)) .
-             set address (_acctAddress addr) .
-             set caller (view address env) .
-             set callData (V.fromList cdata) $ env
-  r <- runVM (emptyState es (fromIntegral g)) env' Nothing
-  case r of
-    Left _ -> return r
-    (Right (Call {},_)) -> return $ Left $ "VM error: Call returned from 'runVM': " ++ show r
-    (Right (Final o,vm')) ->
-           runVM vm env (Just $ Resume 1 o action (view ext vm'))
+  let parsedcode = parse codes
+  case parsedcode of
+    Left e -> return $ Left e
+    Right prog' -> do
+      let es = view ext vm
+          env' = set prog (toProg prog') .
+                 set address (_acctAddress addr) .
+                 set caller (view address env) .
+                 set callData (V.fromList cdata) $ env
+      r <- runVM (emptyState es (fromIntegral g)) env' Nothing
+      case r of
+        Left _ -> return r
+        (Right (Call {},_)) -> return $ Left $ "VM error: Call returned from 'runVM': " ++ show r
+        (Right (Final o,vm')) ->
+            runVM vm env (Just $ Resume 1 o action (view ext vm'))
 
 
 stepVM :: (Show e, VM m e) => Maybe (Resume e) -> m VMResult
@@ -177,7 +181,7 @@ $(makeLenses ''TestExtData)
 
 
 run_ :: String -> IO (Either String (Output TestExtData))
-run_ = runBC_ . parseHex
+run_ = either error runBC_ . parseHex
 
 runBC_ :: ToByteCode a => [a] -> IO (Either String (Output TestExtData))
 runBC_ bc = runVM (emptyState ex gas')

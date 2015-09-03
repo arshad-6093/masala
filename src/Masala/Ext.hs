@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -8,15 +9,20 @@
 module Masala.Ext where
 
 import Masala.Instruction
+import Data.Aeson hiding ((.=))
 import Control.Lens hiding (op)
 import Data.Word
 import qualified Data.Map.Strict as M
 import Control.Monad.Reader
 import Control.Monad.State
+import GHC.Generics
 
 type Gas = Int
 
-newtype Address = Address U256 deriving (Num,Eq,Show,Ord,Bounded,Enum,Integral,Real)
+newtype Address = Address U256 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic)
+instance Show Address where show (Address u) = showHex u
+
+instance FromJSON Address where parseJSON = parseJSONHex "Address"
 
 data ExtAccount = ExtAccount {
       _acctCode :: [Word8]
