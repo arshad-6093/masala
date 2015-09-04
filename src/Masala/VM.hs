@@ -1,4 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE RankNTypes #-}
@@ -6,7 +5,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveFunctor #-}
 
 module Masala.VM where
 
@@ -85,7 +83,7 @@ stepVM r = do
               doDebug (liftIO $ putStrLn $ "Resume: " ++ show rs)
               ext .= e
               case action of
-                SaveMem loc len -> mstores loc 0 len (V.fromList $ w8sToU256s result)
+                SaveMem loc len -> mstores loc 0 len result
                 SaveCode addr -> xRun $ xSaveCode <@$> addr <@*> result
               push p
               return Next

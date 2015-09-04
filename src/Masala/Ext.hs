@@ -103,7 +103,7 @@ data LogEntry = LogEntry {
       logAddress :: Address
     , logBlock :: U256
     , logTopics :: [U256]
-    , logData :: [U256]
+    , logData :: [Word8]
 } deriving (Eq,Show)
 
 data Ext e = Ext {

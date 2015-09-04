@@ -24,8 +24,8 @@ import Control.Exception
 import Control.Monad
 
 runReport :: FilePath -> IO ()
-runReport f = do
-  ts <- runFile f
+runReport tf = do
+  ts <- runFile tf
   let tally :: (Int,Int,Int) -> TestResult -> (Int,Int,Int)
       tally (s,f,e) r = case r of
                         (Success {}) -> (succ s,f,e)
@@ -35,8 +35,8 @@ runReport f = do
       pr r = print r
       (ss,fs,es) = foldl tally (0,0,0) ts
   mapM_ pr ts
-  putStrLn $ f ++ ": " ++ show (length ts) ++ " tests, " ++ show ss ++ " success, " ++
-           show fs ++ " failure, " ++ show es ++ " errors"
+  putStrLn $ tf ++ ": " ++ show (length ts) ++ " tests, " ++ show ss ++ " successes, " ++
+           show fs ++ " failures, " ++ show es ++ " errors"
 
 
 runFile :: FilePath -> IO [TestResult]
@@ -99,7 +99,7 @@ validateRun n t o = either (Failure n t o) (const (Success n)) check
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
               case fst o of
-                Final os -> assertEqual "output matches" (words ws) os
+                Final os -> assertEqual "output matches" (words ws) (dropWhile (==0) os)
                 r -> Left $ "FAILED: non-final result expected " ++ show ws ++ ", result: " ++ show r
 
 assertPostAcctsMatch :: M.Map Address ExtAccount -> M.Map Address ExtAccount -> Either String ()
@@ -125,12 +125,14 @@ runVMTest dbg tname test = do
   when dbg $ do
     putStrLn ("Test: " ++ show test)
     putStrLn ("Prog: " ++ show tbc)
-  either (Left . (("Test failed: " ++ tname ++ ": ") ++)) Right <$>
-         runVM (emptyState exdata gas') env Nothing
-    where env = Env {
+  if null tbc then return $ Right (Final [],vmstate)
+  else either (Left . (("Test failed: " ++ tname ++ ": ") ++)) Right <$>
+         runVM vmstate env Nothing
+    where vmstate = emptyState exdata gas'
+          env = Env {
                _debug = dbg
              , _doGas = True
-             , _callData = V.fromList (w8sToU256s (words (edata ex)))
+             , _callData = V.fromList (words (edata ex))
              , _envExtApi = api
              , _prog = toProg tbc
              , _address = eaddress ex
@@ -164,15 +166,15 @@ toEacct k acct = ExtAccount {
 type TestAccts = M.Map Address TestAcct
 
 data VMTest = VMTest {
-      vcallcreates :: Maybe [String] -- apparently unused in vmtests
-    , venv :: TestEnv
-    , vexec :: TestExec
+      vexec :: TestExec
     , vgas :: Maybe U256
     , vlogs :: Maybe [TestLog]
     , vout :: Maybe WordArray
     , vpost :: Maybe TestAccts
     , vpre :: TestAccts
     , vpostStateRoot :: Maybe String
+    , venv :: TestEnv
+    , vcallcreates :: Maybe [String] -- apparently unused in vmtests
 } deriving (Eq,Show,Generic)
 instance FromJSON VMTest where parseJSON = parsePrefixJSON 'v'
 

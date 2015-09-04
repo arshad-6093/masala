@@ -27,7 +27,7 @@ dispatch SUB (_,[a,b]) = push (a - b) >> next
 dispatch DIV (_,[a,b]) = push (if b == 0 then 0 else a `div` b) >> next
 dispatch SDIV (_,[a,b]) = pushs (sgn a `sdiv` sgn b) >> next
 dispatch MOD (_,[a,b]) = push (if b == 0 then 0 else a `mod` b) >> next
-dispatch SMOD (_,[a,b]) = pushs (if b == 0 then 0 else sgn a `mod` sgn b) >> next
+dispatch SMOD (_,[a,b]) = pushs (sgn a `smod` sgn b) >> next
 dispatch ADDMOD (_,[a,b,c]) = push (if c == 0 then 0 else (a + b) `mod` c) >> next
 dispatch MULMOD (_,[a,b,c]) = push (if c == 0 then 0 else (a * b) `mod` c) >> next
 dispatch EXP (_,[a,b]) = push (a ^ b) >> next
@@ -49,11 +49,11 @@ dispatch BALANCE (_,[a]) = maybe 0 (fromIntegral . view acctBalance) <$> addy (t
 dispatch ORIGIN _ = view origin >>= push . fromIntegral >> next
 dispatch CALLER _ = view caller >>= push . fromIntegral >> next
 dispatch CALLVALUE _ = view callValue >>= push >> next
-dispatch CALLDATALOAD (_,[a]) = fromMaybe 0 . (V.!? int a) <$> view callData >>=
+dispatch CALLDATALOAD (_,[a]) = fromIntegral . fromMaybe 0 . (V.!? int a) <$> view callData >>=
                                 push >> next
 dispatch CALLDATASIZE _ = fromIntegral . V.length <$> view callData >>= push >> next
-dispatch CALLDATACOPY (_,[a,b,c]) = view callData >>=
-                                    mstores a (int b) (int c) >> next
+dispatch CALLDATACOPY (_,[a,b,c]) = V.toList <$> view callData >>=
+                                    mstores a b c >> next
 dispatch CODESIZE _ = fromIntegral . V.length . pCode <$> view prog >>= push >> next
 dispatch CODECOPY (_,[a,b,c]) = bcsToWord8s . V.toList . pCode <$> view prog >>=
                                 codeCopy a (int b) (int c) >> next
@@ -72,7 +72,7 @@ dispatch GASLIMIT _ = fromIntegral <$> view gaslimit >>= push >> next
 dispatch POP _ = next -- exec already pops 1 per spec
 dispatch MLOAD (_,[a]) = mload a >>= push >> next
 dispatch MSTORE (_,[a,b]) = mstore a b >> next
-dispatch MSTORE8 (_,[a,b]) = mstore a b >> next
+dispatch MSTORE8 (_,[a,b]) = mstore8 (fromIntegral a) (fromIntegral b) >> next
 dispatch SLOAD (_,[a]) = sload a >>= push >> next
 dispatch SSTORE (_,[a,b]) = sstore a b >> next
 dispatch JUMP (_,[a]) = jump a
@@ -88,11 +88,11 @@ dispatch _ (Log n,args) = log n args >> next
 dispatch CREATE (_,[a,b,c]) = create (fromIntegral a) b (fromIntegral c)
 dispatch CALL (_,[g,t,gl,io,il,oo,ol]) =
     let a = toAddress t in
-    doCall (fromIntegral g) a a (fromIntegral gl) io il oo (int ol)
+    doCall (fromIntegral g) a a (fromIntegral gl) io il oo ol
 dispatch CALLCODE (_,[g,t,gl,io,il,oo,ol]) =
     view address >>= \a ->
-    doCall (fromIntegral g) a (toAddress t) (fromIntegral gl) io il oo (int ol)
-dispatch RETURN (_,[a,b]) = Return . concatMap u256ToW8s <$> mloads (a `div` 32) (b `div` 32)
+    doCall (fromIntegral g) a (toAddress t) (fromIntegral gl) io il oo ol
+dispatch RETURN (_,[a,b]) = Return <$> mloads a b
 dispatch SUICIDE (_,[a]) = suicide (toAddress a)
 dispatch _ ps = err $ "Unsupported operation [" ++ show ps ++ "]"
 
@@ -120,8 +120,8 @@ jump j = do
     Just c -> return (Jump c)
 
 codeCopy :: VM m e => U256 -> Int -> Int -> [Word8] -> m ()
-codeCopy memloc codeoff len codes = mstores memloc 0 (V.length us) us
-    where us = V.fromList . w8sToU256s . take len . drop codeoff $ codes
+codeCopy memloc codeoff len codes = mstores memloc 0 (fromIntegral $ length us) us
+    where us = take len . drop codeoff $ codes
 
 lookupAcct :: VM m e => String -> Address -> m ExtAccount
 lookupAcct msg addr = do
@@ -129,7 +129,7 @@ lookupAcct msg addr = do
   maybe (throwError $ msg ++ ": " ++ show addr) return l
 
 doCall :: VM m e => Gas -> Address -> Address -> Gas ->
-          U256 -> U256 -> U256 -> Int -> m (ControlFlow e)
+          U256 -> U256 -> U256 -> U256 -> m (ControlFlow e)
 doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
   d <- mloads inoff inlen
   codes <- view acctCode <$> lookupAcct "doCall: invalid code acct" codeAddr
@@ -139,7 +139,7 @@ doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
 
 create :: VM m e => Gas -> U256 -> U256 -> m (ControlFlow e)
 create cgas codeloc codeoff = do
-  codes <- concatMap u256ToW8s <$> mloads codeloc codeoff
+  codes <- mloads codeloc codeoff
   newaddy <- xRun $ xCreate <@$> cgas
   deductGas cgas
   gl <- view gaslimit
@@ -156,24 +156,30 @@ addy :: VM m e => Address -> m (Maybe ExtAccount)
 addy k = xRun $ xAddress <@$> k
 
 mload :: VM m e => U256 -> m U256
-mload i = fromMaybe 0 . M.lookup i <$> use mem
+mload i = do
+  m <- use mem
+  return $ head . w8sToU256s . map (fromMaybe 0 . (`M.lookup` m)) $ [i .. i+31]
+
 
 mstore :: VM m e => U256 -> U256 -> m ()
-mstore i v = mem %= M.insert i v
+mstore i v = mem %= M.union (M.fromList $ reverse $ zip (reverse [i .. i + 31]) (reverse (u256ToW8s v)))
 
-mloads :: VM m e => U256 -> U256 -> m [U256]
-mloads loc len | len == 0 = return []
-               | otherwise = mapM mload [loc .. loc + (len - 1)]
+mstore8 :: VM m e => U256 -> Word8 -> m ()
+mstore8 i b = mem %= M.insert i b
 
-mstores :: VM m e => U256 -> Int -> Int -> V.Vector U256 -> m ()
+
+mloads :: VM m e => U256 -> U256 -> m [Word8]
+mloads loc len | len < 1 = return []
+               | otherwise = do
+  m <- use mem
+  return $ map (fromMaybe 0 . (`M.lookup` m)) $ [loc .. loc + len - 1]
+
+
+mstores :: VM m e => U256 -> U256 -> U256 -> [Word8] -> m ()
 mstores memloc off len v
-    | V.length v < off + len = return () -- really an error ...
-    | otherwise =
-        mem %= mstores' memloc off len v
+    | len < 1 = return ()
+    | otherwise = mem %= M.union (M.fromList $ zip [memloc .. memloc + len - 1] (drop (fromIntegral off) v))
 
-mstores' :: U256 -> Int -> Int -> V.Vector U256 -> Mem -> Mem
-mstores' memloc off len v =
-    mappend (M.fromList . zip [memloc ..] . V.toList . V.slice off len $ v)
 
 
 sload :: VM m e => U256 -> m U256
@@ -233,10 +239,13 @@ log n (mstart:msize:topics)
 
 sdiv :: S256 -> S256 -> S256
 sdiv a b | b == 0 = 0
-         | a == bigneg || b == (-1) = bigneg
-         | otherwise = a `div` b
-         where bigneg = (-2) ^ (255 :: Int)
+         -- | a == bigneg || b == (-1) = bigneg -- go code doesn't like this apparently
+         | otherwise = (abs a `div` abs b) * (signum a * signum b)
+         -- where bigneg = (-2) ^ (255 :: Int)
 
+smod :: S256 -> S256 -> S256
+smod a b | b == 0 = 0
+         | otherwise = (abs a `mod` abs b) * signum a
 
 deductGas :: VM m e => Gas -> m ()
 deductGas total = do
@@ -287,8 +296,8 @@ refund g = do
   xRun $ xRefund <@$> a <@*> g
 
 
-sha3 :: VM m e => [U256] -> m U256
-sha3 = bhead . w8sToU256s . BA.unpack . hash256 . BA.pack . concatMap u256ToW8s
+sha3 :: VM m e => [Word8] -> m U256
+sha3 = bhead . w8sToU256s . BA.unpack . hash256 . BA.pack
          where hash256 :: BA.Bytes -> Digest SHA3_256
                hash256 = hash
                bhead [] = return 0

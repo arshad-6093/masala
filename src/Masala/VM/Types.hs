@@ -27,7 +27,7 @@ data Prog = Prog {
 }
 
 type Stack = [U256]
-type Mem = M.Map U256 U256
+type Mem = M.Map U256 Word8
 type Ctr = Int
 data VMState e = VMState {
       _stack :: Stack
@@ -41,7 +41,7 @@ $(makeLenses ''VMState)
 
 instance HasExtState e (VMState e) where ext = vmext
 
-data CallAction = SaveMem U256 Int | SaveCode Address deriving (Eq,Show)
+data CallAction = SaveMem U256 U256 | SaveCode Address deriving (Eq,Show)
 
 
 data Resume e = Resume {
@@ -55,7 +55,7 @@ data Resume e = Resume {
 data Env e = Env {
       _debug :: Bool
     , _doGas :: Bool
-    , _callData :: V.Vector U256
+    , _callData :: V.Vector Word8
     , _envExtApi :: Ext e
     , _prog :: Prog
     , _address :: Address
@@ -83,7 +83,7 @@ data VMResult =
             cAcct :: ExtAccount,
             cCode :: [Word8],
             cGasLimit :: Gas,
-            cData :: [U256],
+            cData :: [Word8],
             cAction :: CallAction }
           deriving (Eq,Show)
 
