@@ -21,6 +21,7 @@ import Prelude hiding (LT,GT,EQ,log)
 import qualified Data.Map.Strict as M
 import Masala.Gas
 import Masala.Ext
+import Masala.Ext.Simple
 import qualified Data.Set as S
 import Masala.VM.Types
 import Masala.VM.Dispatch
@@ -169,23 +170,12 @@ debugOut i svals = do
 -- TESTING
 ----
 
-data TestExtData = TestExtData {
-      _edAccts :: M.Map Address ExtAccount
-    , _edSuicides :: S.Set Address
-    , _edCreates :: S.Set Address
-    , _edRefund :: M.Map Address Gas
-    , _edLog :: [LogEntry]
-} deriving (Eq,Show)
-
-$(makeLenses ''TestExtData)
-
-
-run_ :: String -> IO (Either String (Output TestExtData))
+run_ :: String -> IO (Either String (Output ExtData))
 run_ = either error runBC_ . parseHex
 
-runBC_ :: ToByteCode a => [a] -> IO (Either String (Output TestExtData))
+runBC_ :: ToByteCode a => [a] -> IO (Either String (Output ExtData))
 runBC_ bc = runVM (emptyState ex gas')
-            (Env dbug enableGas calldata testExt
+            (Env dbug enableGas calldata api
              (toProg tbc)
              (_acctAddress acc)
              addr
@@ -197,26 +187,6 @@ runBC_ bc = runVM (emptyState ex gas')
           enableGas = True
           gas' = 10000000
           acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
-          ex = TestExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
+          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
           calldata = V.fromList [0,1,2,3,4]
           dbug = True
-          testExt :: Ext TestExtData
-          testExt = Ext {
-                      xStore = \a k v -> xover (edAccts . ix a . acctStore) (M.insert k v)
-                    , xLoad = \a k -> xfirstOf (edAccts . ix a . acctStore . ix k)
-                    , xAddress = \k -> xfirstOf (edAccts . ix k)
-                    , xCreate = \g -> do
-                                  newaddy <- succ . maximum . M.keys <$> xview edAccts
-                                  let newacct = ExtAccount [] g newaddy M.empty
-                                  xover edCreates (S.insert newaddy)
-                                  xover edAccts (M.insert newaddy newacct)
-                                  return newacct
-                    , xSaveCode = \a ws -> setExt $ set (edAccts . ix a . acctCode) ws
-                    , xSuicide = \a -> do
-                                  justDeleted <- S.member a <$> xview edSuicides
-                                  xover edSuicides (S.delete a)
-                                  return justDeleted
-                    , xRefund = \a g -> xover edRefund (M.insertWith (+) a g)
-                    , xIsCreate = \a -> S.member a <$> xview edCreates
-                    , xLog = \l -> xover edLog (l:)
-                    }

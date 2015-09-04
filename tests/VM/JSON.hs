@@ -6,6 +6,7 @@ module VM.JSON where
 import qualified Data.Map.Strict as M
 import Masala.Instruction
 import Masala.Ext
+import Masala.Ext.Simple
 import Masala.VM
 import Masala.VM.Types
 import Data.Word
@@ -20,6 +21,23 @@ import Prelude hiding (words)
 import qualified Data.Set as S
 import Control.Lens
 import Control.Exception
+import Control.Monad
+
+runReport :: FilePath -> IO ()
+runReport f = do
+  ts <- runFile f
+  let tally :: (Int,Int,Int) -> TestResult -> (Int,Int,Int)
+      tally (s,f,e) r = case r of
+                        (Success {}) -> (succ s,f,e)
+                        (Failure {}) -> (s,succ f,e)
+                        (Err {}) -> (s,f,succ e)
+      pr (Success {}) = return ()
+      pr r = print r
+      (ss,fs,es) = foldl tally (0,0,0) ts
+  mapM_ pr ts
+  putStrLn $ f ++ ": " ++ show (length ts) ++ " tests, " ++ show ss ++ " success, " ++
+           show fs ++ " failure, " ++ show es ++ " errors"
+
 
 runFile :: FilePath -> IO [TestResult]
 runFile f = do
@@ -51,11 +69,13 @@ runTest dbg t tc = do
   putStrLn "-----------------"
   putStrLn t
   putStrLn "-----------------"
-  let catcher :: SomeException -> IO (Either String (Output TestExtData))
+  let catcher :: SomeException -> IO (Either String (Output ExtData))
       catcher e = return $ Left $ "Runtime exception: " ++ show e
   r <- catch (runVMTest dbg t tc) catcher
   case r of
-    Left e -> return $ Err t $ "Runtime failure: " ++ e
+    Left e -> if isNothing (vpost tc) && isNothing (vout tc)
+              then return $ Success (t ++ " [with failure: " ++ e ++ "]")
+              else return $ Err t $ "Runtime failure: " ++ e
     Right o -> do
            let tr = validateRun t tc o
            print tr
@@ -63,7 +83,7 @@ runTest dbg t tc = do
 
 data TestResult =
           Success String
-        | Failure String VMTest (Output TestExtData) String
+        | Failure String VMTest (Output ExtData) String
         | Err String String
 
 instance Show TestResult where
@@ -71,33 +91,47 @@ instance Show TestResult where
     show (Err n e) = "\nERROR: " ++ n ++ ": " ++ e
     show (Failure n t o e) = "\nFAILURE: " ++ n ++ ": " ++ e
 
-validateRun :: String -> VMTest -> Output TestExtData -> TestResult
+validateRun :: String -> VMTest -> Output ExtData -> TestResult
 validateRun n t o = either (Failure n t o) (const (Success n)) check
     where check = checkPost (vpost t) >> checkOutput (vout t)
           checkPost Nothing = Right ()
-          checkPost (Just ts) =
-              assertEqual "post accts match"
-                              (M.mapWithKey toEacct ts)
-                              (_edAccts . _vmext . snd $ o)
+          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct ts) (_edAccts . _vmext . snd $ o)
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
               case fst o of
                 Final os -> assertEqual "output matches" (words ws) os
                 r -> Left $ "FAILED: non-final result expected " ++ show ws ++ ", result: " ++ show r
 
+assertPostAcctsMatch :: M.Map Address ExtAccount -> M.Map Address ExtAccount -> Either String ()
+assertPostAcctsMatch i a | i == a = return ()
+                         | M.keys i /= M.keys a = assertEqual "post accts match" i a
+                         | otherwise = either Left (const $ Right ()) $
+                                       mapM testEach (M.toList $ M.intersectionWith (,) i a)
+
+testEach :: (Address, (ExtAccount, ExtAccount)) -> Either String ()
+testEach (k, (i, a)) = do
+  let msg m = "Account '" ++ show k ++ "' " ++ m ++ " equal"
+  assertEqual (msg "code") (_acctCode i) (_acctCode a)
+  assertEqual (msg "balance") (_acctBalance i) (_acctBalance a)
+  assertEqual (msg "store") (_acctStore i) (_acctStore a)
+
 assertEqual :: (Eq a, Show a) => String -> a -> a -> Either String ()
 assertEqual msg a b | a == b = return ()
                  | otherwise = Left $ "FAILED: " ++ msg ++ ", intended=" ++
                                show a ++ ", actual=" ++ show b
 
-runVMTest :: Bool -> String -> VMTest -> IO (Either String (Output TestExtData))
-runVMTest dbg tname test = either (Left . (("Test failed: " ++ tname) ++)) Right <$>
-                       runVM (emptyState exdata gas') env Nothing
+runVMTest :: Bool -> String -> VMTest -> IO (Either String (Output ExtData))
+runVMTest dbg tname test = do
+  when dbg $ do
+    putStrLn ("Test: " ++ show test)
+    putStrLn ("Prog: " ++ show tbc)
+  either (Left . (("Test failed: " ++ tname ++ ": ") ++)) Right <$>
+         runVM (emptyState exdata gas') env Nothing
     where env = Env {
                _debug = dbg
              , _doGas = True
              , _callData = V.fromList (w8sToU256s (words (edata ex)))
-             , _envExtApi = testExt
+             , _envExtApi = api
              , _prog = toProg tbc
              , _address = eaddress ex
              , _origin = eorigin ex
@@ -116,29 +150,8 @@ runVMTest dbg tname test = either (Left . (("Test failed: " ++ tname) ++)) Right
           tenv = venv test
           tbc = concatMap toByteCode (parse (words (ecode ex)))
           gas' = fromIntegral $ egas ex
-          exdata = TestExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty []
+          exdata = ExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty []
 
-          testExt :: Ext TestExtData
-          testExt = Ext {
-                      xStore = \a k v -> xover (edAccts . ix a . acctStore)
-                               (\m -> if v == 0 then M.delete k m else M.insert k v m)
-                    , xLoad = \a k -> xfirstOf (edAccts . ix a . acctStore . ix k)
-                    , xAddress = \k -> xfirstOf (edAccts . ix k)
-                    , xCreate = \g -> do
-                                  newaddy <- succ . maximum . M.keys <$> xview edAccts
-                                  let newacct = ExtAccount [] g newaddy M.empty
-                                  xover edCreates (S.insert newaddy)
-                                  xover edAccts (M.insert newaddy newacct)
-                                  return newacct
-                    , xSaveCode = \a ws -> setExt $ set (edAccts . ix a . acctCode) ws
-                    , xSuicide = \a -> do
-                                  justDeleted <- S.member a <$> xview edSuicides
-                                  xover edSuicides (S.delete a)
-                                  return justDeleted
-                    , xRefund = \a g -> xover edRefund (M.insertWith (+) a g)
-                    , xIsCreate = \a -> S.member a <$> xview edCreates
-                    , xLog = \l -> xover edLog (l:)
-                    }
 
 toEacct :: Address -> TestAcct -> ExtAccount
 toEacct k acct = ExtAccount {
@@ -215,7 +228,7 @@ newtype WordArray = WordArray { words :: [Word8] }
 instance FromJSON WordArray where
     parseJSON = withText "WordArray"
                 (\t -> case hexToWord8s (drop 2 $ T.unpack t) of
-                         Right a -> return (WordArray a)
+                         Right a -> return (WordArray (dropWhile (==0) a))
                          Left err -> fail err)
 instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHex a
 

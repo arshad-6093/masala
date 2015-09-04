@@ -26,10 +26,10 @@ dispatch MUL (_,[a,b]) = push (a * b) >> next
 dispatch SUB (_,[a,b]) = push (a - b) >> next
 dispatch DIV (_,[a,b]) = push (if b == 0 then 0 else a `div` b) >> next
 dispatch SDIV (_,[a,b]) = pushs (sgn a `sdiv` sgn b) >> next
-dispatch MOD (_,[a,b]) = push (a `mod` b) >> next
-dispatch SMOD (_,[a,b]) = pushs (sgn a `mod` sgn b) >> next
-dispatch ADDMOD (_,[a,b,c]) = push (a + b `mod` c) >> next
-dispatch MULMOD (_,[a,b,c]) = push (a * b `mod` c) >> next
+dispatch MOD (_,[a,b]) = push (if b == 0 then 0 else a `mod` b) >> next
+dispatch SMOD (_,[a,b]) = pushs (if b == 0 then 0 else sgn a `mod` sgn b) >> next
+dispatch ADDMOD (_,[a,b,c]) = push (if c == 0 then 0 else (a + b) `mod` c) >> next
+dispatch MULMOD (_,[a,b,c]) = push (if c == 0 then 0 else (a * b) `mod` c) >> next
 dispatch EXP (_,[a,b]) = push (a ^ b) >> next
 dispatch SIGNEXTEND (_,[a,b]) = push (int a `signextend` b) >> next
 dispatch LT (_,[a,b]) = pushb (a < b) >> next
