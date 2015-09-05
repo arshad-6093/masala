@@ -22,7 +22,7 @@ library
   -- other-modules:
   -- other-extensions:
   build-depends:
-                              base >=4.7 && <4.9
+                                  base >=4.7 && <4.9
                 , aeson
                 , bytestring
                 , containers >= 0.5
@@ -31,7 +31,9 @@ library
                 , lens
                 , memory
                 , mtl
-                , tangaroa == 0.0.0.1
+                , transformers
+                , unordered-containers
+                --, tangaroa == 0.0.0.1
                 , text
                 , vector
   hs-source-dirs:      src
