@@ -9,6 +9,7 @@ import Masala.Ext
 import Masala.Ext.Simple
 import Masala.VM
 import Masala.VM.Types
+import Masala.RPC
 import Data.Word
 import Data.Aeson hiding ((.=),Success)
 import Data.Aeson.Types hiding (parse,Success)
@@ -99,7 +100,7 @@ validateRun n t o = either (Failure n t o) (const (Success n)) check
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
               case fst o of
-                Final os -> assertEqual "output matches" (words ws) (dropWhile (==0) os)
+                Final os -> assertEqual "output matches" (getWords ws) (dropWhile (==0) os)
                 r -> Left $ "FAILED: non-final result expected " ++ show ws ++ ", result: " ++ show r
 
 assertPostAcctsMatch :: M.Map Address ExtAccount -> M.Map Address ExtAccount -> Either String ()
@@ -132,7 +133,7 @@ runVMTest dbg tname test = do
           env = Env {
                _debug = dbg
              , _doGas = True
-             , _callData = V.fromList (words (edata ex))
+             , _callData = V.fromList (getWords (edata ex))
              , _envExtApi = api
              , _prog = toProg tbc
              , _address = eaddress ex
@@ -150,14 +151,14 @@ runVMTest dbg tname test = do
              }
           ex = vexec test
           tenv = venv test
-          tbc = concatMap toByteCode (parse (words (ecode ex)))
+          tbc = concatMap toByteCode (parse (getWords (ecode ex)))
           gas' = fromIntegral $ egas ex
           exdata = ExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty []
 
 
 toEacct :: Address -> TestAcct -> ExtAccount
 toEacct k acct = ExtAccount {
-                   _acctCode = words (acode acct)
+                   _acctCode = getWords (acode acct)
                  , _acctBalance = fromIntegral $ abalance acct
                  , _acctAddress = k
                  , _acctStore = astorage acct
@@ -176,7 +177,7 @@ data VMTest = VMTest {
     , venv :: TestEnv
     , vcallcreates :: Maybe [String] -- apparently unused in vmtests
 } deriving (Eq,Show,Generic)
-instance FromJSON VMTest where parseJSON = parsePrefixJSON 'v'
+instance FromJSON VMTest where parseJSON = parseDropPfxJSON 1
 
 
 
@@ -200,7 +201,7 @@ data TestExec = TestExec {
     , eorigin :: Address
     , evalue :: U256
 } deriving (Eq,Show,Generic)
-instance FromJSON TestExec where parseJSON = parsePrefixJSON 'e'
+instance FromJSON TestExec where parseJSON = parseDropPfxJSON 1
 
 data TestLog = TestLog {
       laddress :: Address
@@ -208,7 +209,7 @@ data TestLog = TestLog {
     , ldata :: String
     , topics :: [U256]
 } deriving (Eq,Show,Generic)
-instance FromJSON TestLog where parseJSON = parsePrefixJSON 'l'
+instance FromJSON TestLog where parseJSON = parseDropPfxJSON 1
 
 
 data TestAcct = TestAcct {
@@ -217,26 +218,13 @@ data TestAcct = TestAcct {
     , anonce :: U256
     , astorage :: M.Map U256 U256
 } deriving (Eq,Show,Generic)
-instance FromJSON TestAcct where parseJSON = parsePrefixJSON 'a'
+instance FromJSON TestAcct where parseJSON = parseDropPfxJSON 1
 
 instance (FromJSON v) => FromJSON (M.Map U256 v) where
     parseJSON = parseMap (either error id . eitherReadHex)
 instance (FromJSON v) => FromJSON (M.Map Address v) where
     parseJSON = parseMap (either error id . eitherReadHex)
 
-
-newtype WordArray = WordArray { words :: [Word8] }
-    deriving (Eq,Generic)
-instance FromJSON WordArray where
-    parseJSON = withText "WordArray"
-                (\t -> case hexToWord8s (drop 2 $ T.unpack t) of
-                         Right a -> return (WordArray (dropWhile (==0) a))
-                         Left err -> fail err)
-instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHex a
-
-
-parsePrefixJSON :: (Generic a, GFromJSON (Rep a), FromJSON a) => Char -> Value -> Parser a
-parsePrefixJSON p = genericParseJSON (defaultOptions { fieldLabelModifier = dropWhile (==p) })
 
 parseMap :: (FromJSON (M.Map k' v), Ord k) =>
             (k' -> k) -> Value -> Parser (M.Map k v)

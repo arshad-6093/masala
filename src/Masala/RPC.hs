@@ -1,14 +1,53 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveGeneric #-}
+
 module Masala.RPC where
 
-import Data.Aeson
-import Control.Monad.Except
-import Control.Monad.IO.Class
+
+import Data.Aeson hiding ((.=))
+import Data.Aeson.Types (fieldLabelModifier,defaultOptions,Parser)
+import Control.Monad.Except    
 import Masala.Ext
+import qualified Data.Text as T
 import qualified Data.Char as C
 import qualified Data.HashMap.Strict as HM
 import GHC.Generics
+import Masala.Instruction
+import Data.Word
+import Masala.VM.Types
+import Masala.VM
+import Control.Monad.State
+import Data.Maybe
+import Control.Lens
+
+data RPCState e = RPCState { _rpcEnv :: Env e, _rpcExt :: e }
+$(makeLenses ''RPCState)
+
+
+type RPC m e = (Monad m
+              ,MonadIO m
+              ,MonadState (RPCState e) m
+              ,MonadError String m
+              ,Show e
+              )
+
+newtype WordArray = WordArray { getWords :: [Word8] }
+    deriving (Eq,Generic)
+instance FromJSON WordArray where
+    parseJSON = withText "WordArray"
+                (\t -> case hexToWord8s (drop 2 $ T.unpack t) of
+                         Right a -> return (WordArray (dropWhile (==0) a))
+                         Left err -> fail err)
+instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHex a
+
+
+parseDropPfxJSON :: (Generic a, GFromJSON (Rep a), FromJSON a) => Int -> Value -> Parser a
+parseDropPfxJSON n = genericParseJSON (defaultOptions { fieldLabelModifier = drop n })
+ 
 
 data RPCall =
         Eth_accounts |
@@ -60,31 +99,118 @@ data RPCall =
         Eth_getTransactionReceipt
         deriving (Eq,Enum,Bounded,Show)
 
+            
+data SendTran = SendTran {
+    stfrom :: Address, -- The address the transaction is send from.
+    stto :: Maybe Address, -- (optional when creating new contract) The address the transaction is directed to.
+    stgas :: Maybe U256, -- (optional, default: 90000) Integer of the gas provided for the transaction execution. It will return unused gas.
+    stgasPrice :: Maybe U256, -- (optional, default: To-Be-Determined) Integer of the gasPrice used for each paid gas
+    stvalue :: Maybe U256, -- (optional) Integer of the value send with this transaction
+    stdata :: Maybe WordArray, -- (optional) The compiled code of a contract
+    stnonce :: Maybe U256 -- (optional) Integer of a nonce. This allows to overwrite your own pending transactions that use the same nonce.
+    } deriving (Generic,Show)
+               
+instance FromJSON SendTran where parseJSON = parseDropPfxJSON 2
+
+
+data EthCall = EthCall {
+  cfrom :: Maybe Address, -- (optional) The address the transaction is send from.
+  cto :: Address, -- The address the transaction is directed to.
+  cgas :: Maybe U256, -- (optional) Integer of the gas provided for the transaction execution. eth_call consumes zero gas, but this parameter may be needed by some executions.
+  cgasPrice :: Maybe U256, --  (optional) Integer of the gasPrice used for each paid gas
+  cvalue :: Maybe U256, -- (optional) Integer of the value send with this transaction
+  cdata :: Maybe WordArray, -- (optional) The compiled code of a contract
+  cblockno :: U256 -- integer block number, or the string "latest", "earliest" or "pending", see the default block parameter TODO
+  } deriving (Generic,Show)
+
+instance FromJSON EthCall where parseJSON = parseDropPfxJSON 1
+
 rpcs :: HM.HashMap String RPCall
 rpcs = foldl (\m r -> HM.insert (lc1 (show r)) r m) HM.empty [minBound..maxBound]
     where lc1 (c:cs) = C.toLower c:cs
 
-runRPC :: (MonadIO m, MonadError String m) => String -> Value -> m Value
+runRPC :: RPC m e => String -> Value -> m Value
 runRPC c v = do
   rpc <- maybe (throwError $ "Invalid RPC: " ++ c) return $ HM.lookup c rpcs
   dispatchRPC rpc v
 
-dispatchRPC :: (MonadIO m, MonadError String m) => RPCall -> Value -> m Value
+dispatchRPC :: RPC m e => RPCall -> Value -> m Value
 dispatchRPC Eth_sendTransaction = call sendTransaction
+dispatchRPC Eth_call = call ethCall
 dispatchRPC c = const (throwError $ "Unsupported RPC: " ++ show c)
 
-call :: (MonadIO m, MonadError String m, FromJSON a) => (a -> m Value) -> Value -> m Value
+call :: (RPC m e, FromJSON a) => (a -> m Value) -> Value -> m Value
 call f v = f =<< case fromJSON v of
                    Error s -> throwError $ "Invalid RPC Payload: " ++
                               s ++ ": " ++ show v
                    Success a -> return a
-                  
-data Tran = Tran Address
-          deriving (Generic)
-instance FromJSON Tran where
-                  
-sendTransaction :: (MonadIO m, MonadError String m) => Tran -> m Value
-sendTransaction t = undefined
+
+
+ethCall :: RPC m e => EthCall -> m Value
+ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata _blockNo) = do -- blockNo TODO
+  liftIO $ putStrLn $ "ethCall: " ++ show m -- TODO handle as "debug"
+  env <- use rpcEnv
+  extdata <- use rpcExt
+  let xapi = _envExtApi env
+      acctm = flip evalExtOp extdata $ xAddress xapi toA
+  case acctm of
+    Nothing -> throwError $ "ethCall: Bad address: " ++ show m
+    Just acct -> do
+      o <- callVM (fromMaybe toA fromA) toA callgas gasPx callvalue (maybe (_acctCode acct) getWords sdata)
+      liftIO $ putStrLn $ "call: Success, output=" ++ show o
+      return $ String $ T.pack $ show o -- TODO need toJSON
+
+      
+                   
+sendTransaction :: RPC m e => SendTran -> m Value
+sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
+  liftIO $ putStrLn $ "sendTransaction: " ++ show m -- TODO handle as "debug"
+  env <- use rpcEnv
+  extdata <- use rpcExt
+  let xapi = _envExtApi env
+      ((addr,acode),extdata') = flip runExtOp extdata $ 
+        case toA of
+          Nothing -> do 
+            acct <- xCreate xapi 0
+            let ad = _acctAddress acct
+                c = maybe [] getWords sdata
+            xSaveCode xapi ad c
+            return (ad,c)
+          Just t -> do
+            acctm <- xAddress xapi t
+            case acctm of
+              Nothing -> error "Bad address" -- TODO, ExtOp should support MonadError
+              Just acct -> return (_acctAddress acct,_acctCode acct)
+  rpcExt .= extdata'
+  o <- callVM fromA addr callgas gasPx callvalue acode 
+  liftIO $ putStrLn $ "sendTransaction: Success, addr=" ++ show addr ++ ", output=" ++ show o
+  return $ String $ T.pack $ "Success, addr=" ++ show addr ++ ", output=" ++ show o
 
          
 
+
+
+callVM :: RPC m e => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [Word8] -> m [Word8]
+callVM toA fromA callgas gasPx callvalue ccode = do
+  env <- use rpcEnv
+  extdata <- use rpcExt
+  let cgas' = fromMaybe 90000 callgas
+      env' = env {
+        _caller = fromA,
+        _origin = fromA,
+        _address = toA,
+        _envGas = cgas', -- TODO, not sure what env gas is ...
+        _callValue = fromMaybe 0 callvalue,
+        _gasPrice = fromMaybe 0 gasPx,
+        _prog = toProg (concatMap toByteCode . parse $ ccode)
+        }
+      vmstate = emptyState extdata (fromIntegral cgas')
+  r <- runVM vmstate env Nothing -- TODO, this should be asynchronous, returning "transaction hash"
+  case r of
+    Left s -> throwError $ "ERROR in callVM: " ++ s
+    Right (vr, vs) -> case vr of
+      Final o -> do
+        liftIO $ putStrLn $ "call: Success, output=" ++ show o
+        rpcEnv .= env'
+        rpcExt .= _vmext vs
+        return o      
