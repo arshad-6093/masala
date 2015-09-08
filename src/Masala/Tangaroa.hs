@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Masala.Tangaroa where
@@ -14,6 +15,8 @@ import qualified Data.Set as S
 import qualified Data.Vector as V
 import Masala.VM.Types
 import Masala.VM
+import Control.Exception
+import qualified Data.Text as T
 
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)
 instance FromJSON RPCCmd
@@ -40,6 +43,14 @@ runEvmRPC ior cmd = do
     Left err -> return $ "runEvmRPC: invalid JSON: " ++ err
     Right (RPCCmd meth pms) -> do
             s <- readIORef ior
-            (v,s') <- runRPCIO s meth pms
+            (v,s') <- catch (runRPCIO s meth pms) (catchErr s)
             writeIORef ior s'
             return (LBS.unpack $ encode v)
+
+catchErr :: RPCState ExtData -> SomeException -> IO (Value,RPCState ExtData)
+catchErr s e = return (object ["error" .= T.pack ("Exception occured: " ++ show e)],s)
+
+_runRPC :: String -> IO String
+_runRPC s = do
+  r <- newIORef initRPCState
+  runEvmRPC r s

@@ -103,13 +103,6 @@ data RPCall =
 
 
 
-class FromJSONs a where parseJSONs :: [Value] -> Either String a
-
-fromJSONs :: (FromJSONs a, FromJSON a) => Value -> Either String a
-fromJSONs v = case fromJSON v of
-          Error s -> Left s
-          Success a -> Right a
-
 data SendTran = SendTran {
     stfrom :: Address, -- The address the transaction is send from.
     stto :: Maybe Address, -- (optional when creating new contract) The address the transaction is directed to.
@@ -121,10 +114,6 @@ data SendTran = SendTran {
     } deriving (Generic,Show)
 
 instance FromJSON SendTran where parseJSON = parseDropPfxJSON 2
-instance FromJSONs SendTran
-    where parseJSONs [a] = fromJSONs a
-          parseJSONs _ = Left "parseJSONs: SendTran supports only single object"
-
 
 data EthCall = EthCall {
   cfrom :: Maybe Address, -- (optional) The address the transaction is send from.
@@ -132,15 +121,11 @@ data EthCall = EthCall {
   cgas :: Maybe U256, -- (optional) Integer of the gas provided for the transaction execution. eth_call consumes zero gas, but this parameter may be needed by some executions.
   cgasPrice :: Maybe U256, --  (optional) Integer of the gasPrice used for each paid gas
   cvalue :: Maybe U256, -- (optional) Integer of the value send with this transaction
-  cdata :: Maybe WordArray, -- (optional) The compiled code of a contract
-  cblockno :: U256 -- integer block number, or the string "latest", "earliest" or "pending", see the default block parameter TODO
+  cdata :: Maybe WordArray -- (optional) The compiled code of a contract
+  -- cblockno :: U256 -- integer block number, or the string "latest", "earliest" or "pending", see the default block parameter TODO
   } deriving (Generic,Show)
 
 instance FromJSON EthCall where parseJSON = parseDropPfxJSON 1
-instance FromJSONs EthCall
-    where parseJSONs [a,b] = fromJSONs (set (key "blockno") b a)
-
-
 
 rpcs :: HM.HashMap String RPCall
 rpcs = foldl (\m r -> HM.insert (lc1 (show r)) r m) HM.empty [minBound..maxBound]
@@ -160,19 +145,22 @@ runRPCIO s c v = do
 
 
 dispatchRPC :: RPC m e => RPCall -> [Value] -> m Value
-dispatchRPC Eth_sendTransaction = call sendTransaction
-dispatchRPC Eth_call = call ethCall
-dispatchRPC c = const (throwError $ "Unsupported RPC: " ++ show c)
+dispatchRPC Eth_sendTransaction [a] = arg a >>= sendTransaction
+dispatchRPC Eth_call [a,b] = arg2 a b >>= uncurry ethCall
+dispatchRPC m a = throwError $ "Unsupported RPC: " ++ show m ++ ", " ++ show a
 
-call :: (RPC m e, FromJSONs a) => (a -> m Value) -> [Value] -> m Value
-call f v = f =<< case parseJSONs v of
-                   Left s -> throwError $ "Invalid RPC Payload: " ++
-                              s ++ ": " ++ show v
-                   Right a -> return a
+arg :: (RPC m e, FromJSON a) => Value -> m a
+arg v = case fromJSON v of
+          Error err -> throwError $ "JSON parse failure: " ++ err
+          Success a -> return a
+
+arg2 :: (RPC m e, FromJSON a, FromJSON b) => Value -> Value -> m (a,b)
+arg2 a b = (,) <$> arg a <*> arg b
 
 
-ethCall :: RPC m e => EthCall -> m Value
-ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata _blockNo) = do -- blockNo TODO
+
+ethCall :: RPC m e => EthCall -> U256 -> m Value
+ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blockNo TODO
   liftIO $ putStrLn $ "ethCall: " ++ show m -- TODO handle as "debug"
   env <- use rpcEnv
   extdata <- use rpcExt
@@ -230,7 +218,8 @@ callVM toA fromA callgas gasPx callvalue ccode = do
         _prog = toProg (concatMap toByteCode . parse $ ccode)
         }
       vmstate = emptyState extdata (fromIntegral cgas')
-  r <- runVM vmstate env Nothing -- TODO, this should be asynchronous, returning "transaction hash"
+  liftIO $ putStrLn $ "callVM: " ++ show vmstate ++ ", " ++ show cgas'
+  r <- runVM vmstate env' Nothing -- TODO, this should be asynchronous, returning "transaction hash"
   case r of
     Left s -> throwError $ "ERROR in callVM: " ++ s
     Right (vr, vs) -> case vr of
