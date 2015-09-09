@@ -31,9 +31,13 @@ api = Ext {
       , xSaveCode = \a ws -> setExt $ set (edAccts . ix a . acctCode) ws
       , xSuicide = \a -> do
                      justDeleted <- S.member a <$> xview edSuicides
-                     xover edSuicides (S.delete a)
+                     xover edSuicides (S.insert a)
                      return justDeleted
       , xRefund = \a g -> xover edRefund (M.insertWith (+) a g)
       , xIsCreate = \a -> S.member a <$> xview edCreates
       , xLog = \l -> xover edLog (l:)
       }
+
+
+runApi_ :: ExtOp ExtData a -> (a, ExtData)
+runApi_ f = runExtOp f (ExtData (M.fromList [(123456,ExtAccount [] 0 0 M.empty)]) S.empty S.empty M.empty [])

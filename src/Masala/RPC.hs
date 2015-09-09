@@ -194,6 +194,7 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
             case acctm of
               Nothing -> error "Bad address" -- TODO, ExtOp should support MonadError
               Just acct -> return (_acctAddress acct,_acctCode acct)
+  liftIO $ print ((addr,acode),extdata')
   rpcExt .= extdata'
   o <- callVM fromA addr callgas gasPx callvalue acode
   liftIO $ putStrLn $ "sendTransaction: Success, addr=" ++ show addr ++ ", output=" ++ show o

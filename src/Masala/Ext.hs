@@ -47,7 +47,8 @@ instance Applicative (ExtOp e) where
     (ExtOp f) <*> (ExtOp a) = ExtOp $ \e -> ((fst $ f e) (fst $ a e),e)
 instance Monad (ExtOp e) where
     return = pure
-    (ExtOp a) >>= f = ExtOp $ \e -> runExtOp (f (fst $ a e)) e
+    a >>= f = ExtOp $ \e -> (\(a',e') -> runExtOp (f a') e')  $ runExtOp a e
+
 
 class HasExtState e a | e -> a where
     ext :: Lens' a e
