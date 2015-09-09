@@ -49,8 +49,7 @@ dispatch BALANCE (_,[a]) = maybe 0 (fromIntegral . view acctBalance) <$> addy (t
 dispatch ORIGIN _ = view origin >>= push . fromIntegral >> next
 dispatch CALLER _ = view caller >>= push . fromIntegral >> next
 dispatch CALLVALUE _ = view callValue >>= push >> next
-dispatch CALLDATALOAD (_,[a]) = fromIntegral . fromMaybe 0 . (V.!? int a) <$> view callData >>=
-                                push >> next
+dispatch CALLDATALOAD (_,[a]) = callDataLoad (int a) >>= push >> next
 dispatch CALLDATASIZE _ = fromIntegral . V.length <$> view callData >>= push >> next
 dispatch CALLDATACOPY (_,[a,b,c]) = V.toList <$> view callData >>=
                                     mstores a b c >> next
@@ -95,6 +94,14 @@ dispatch CALLCODE (_,[g,t,gl,io,il,oo,ol]) =
 dispatch RETURN (_,[a,b]) = Return <$> mloads a b
 dispatch SUICIDE (_,[a]) = suicide (toAddress a)
 dispatch _ ps = err $ "Unsupported operation [" ++ show ps ++ "]"
+
+
+callDataLoad :: VM m e => Int -> m U256
+callDataLoad i = do
+  cd <- view callData
+  let check [] = 0
+      check (a:_) = a
+  return . check . w8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [i .. i+31]
 
 
 next :: VM m e => m (ControlFlow e)
@@ -285,7 +292,7 @@ pops n | n == 0 = return []
        | otherwise = do
   s <- use stack
   if n > length s
-  then err $ "Stack underflow, expected " ++ show n ++ "," ++ show (length s)
+  then err $ "Stack underflow, expected " ++ show n ++ ", found " ++ show (length s)
   else do
     stack .= drop n s
     return (take n s)
@@ -297,13 +304,15 @@ refund g = do
 
 
 sha3 :: VM m e => [Word8] -> m U256
-sha3 = bhead . w8sToU256s . BA.unpack . hash256 . BA.pack
-         where hash256 :: BA.Bytes -> Digest SHA3_256
-               hash256 = hash
-               bhead [] = return 0
+sha3 = bhead . wsToSha3
+         where bhead [] = return 0
                bhead [a] = return a
                bhead (_:_) = err "sha3 resulted in > U256 size"
 
+wsToSha3 :: [Word8] -> [U256]
+wsToSha3 = w8sToU256s . BA.unpack . hash256 . BA.pack
+    where hash256 :: BA.Bytes -> Digest SHA3_256
+          hash256 = hash
 
 blockHash :: VM m e => U256 -> U256 -> m U256
-blockHash _n _blockNum = err "blockhash unimplemented"
+blockHash n blocknum = sha3 $ u256ToW8s (n + blocknum)

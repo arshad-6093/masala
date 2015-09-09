@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -23,6 +24,9 @@ import qualified Data.Set as S
 import Control.Lens
 import Control.Exception
 import Control.Monad
+import Control.Lens hiding ((.=))
+import Data.Aeson.Lens
+import qualified Data.HashMap.Strict as HM
 
 runReport :: FilePath -> IO ()
 runReport tf = do
@@ -46,6 +50,15 @@ runFile f = do
   case ts of
     Left err -> return [Err f $ "Decode failed: " ++ err]
     Right tcs -> mapM (uncurry (runTest False)) . M.toList $ tcs
+
+parseFile :: FilePath -> IO ()
+parseFile f = do
+  d :: Either String Value  <- eitherDecode <$> LBS.readFile f
+  case d of
+    Left e -> error e
+    Right v -> mapM_ (\(k,t)->do putStrLn $ T.unpack k;case (fromJSON t :: Result VMTest) of (Error e) -> error e; _ -> return () ) (HM.toList (view _Object v))
+
+
 
 readVMTests :: FilePath -> IO (Either String (M.Map String VMTest))
 readVMTests f = eitherDecode <$> LBS.readFile f
@@ -175,11 +188,17 @@ data VMTest = VMTest {
     , vpre :: TestAccts
     , vpostStateRoot :: Maybe String
     , venv :: TestEnv
-    , vcallcreates :: Maybe [String] -- apparently unused in vmtests
+    , vcallcreates :: Maybe [CallCreate] -- apparently unused in vmtests
 } deriving (Eq,Show,Generic)
 instance FromJSON VMTest where parseJSON = parseDropPfxJSON 1
 
-
+data CallCreate = CallCreate {
+      ccdata :: WordArray
+    --, ccdestination :: Maybe U256 TODO empty strings?????
+    , ccgasLimit :: U256
+    , ccvalue :: U256
+} deriving (Eq,Show,Generic)
+instance FromJSON CallCreate where parseJSON = parseDropPfxJSON 2
 
 data TestEnv = TestEnv {
       currentCoinbase :: U256

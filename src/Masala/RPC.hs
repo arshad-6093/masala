@@ -25,6 +25,7 @@ import Control.Monad.State
 import Data.Maybe
 import Control.Lens
 import Data.Aeson.Lens
+import qualified Data.Vector as V
 
 data RPCState e = RPCState { _rpcEnv :: Env e, _rpcExt :: e }
 $(makeLenses ''RPCState)
@@ -169,7 +170,7 @@ ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blo
   case acctm of
     Nothing -> throwError $ "ethCall: Bad address: " ++ show m
     Just acct -> do
-      o <- callVM (fromMaybe toA fromA) toA callgas gasPx callvalue (maybe (_acctCode acct) getWords sdata)
+      o <- callVM (fromMaybe toA fromA) toA callgas gasPx callvalue (_acctCode acct) (maybe [] getWords sdata)
       liftIO $ putStrLn $ "call: Success, output=" ++ show o
       return $ String $ T.pack $ show o -- TODO need toJSON
 
@@ -187,7 +188,6 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
             acct <- xCreate xapi 0
             let ad = _acctAddress acct
                 c = maybe [] getWords sdata
-            xSaveCode xapi ad c
             return (ad,c)
           Just t -> do
             acctm <- xAddress xapi t
@@ -196,16 +196,18 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
               Just acct -> return (_acctAddress acct,_acctCode acct)
   liftIO $ print ((addr,acode),extdata')
   rpcExt .= extdata'
-  o <- callVM fromA addr callgas gasPx callvalue acode
+  o <- callVM fromA addr callgas gasPx callvalue acode [] -- TODO, trans may also accept ABI
+  when (isNothing toA) $ rpcExt %= execExtOp (xSaveCode xapi addr o)
+  acct' <- evalExtOp (xAddress xapi addr) <$> use rpcExt
   liftIO $ putStrLn $ "sendTransaction: Success, addr=" ++ show addr ++ ", output=" ++ show o
-  return $ String $ T.pack $ "Success, addr=" ++ show addr ++ ", output=" ++ show o
+  return $ String $ T.pack $ "Success, addr=" ++ show addr ++ ", acct=" ++ show acct'
 
 
 
 
 
-callVM :: RPC m e => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [Word8] -> m [Word8]
-callVM toA fromA callgas gasPx callvalue ccode = do
+callVM :: RPC m e => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [Word8] -> [Word8] -> m [Word8]
+callVM toA fromA callgas gasPx callvalue ccode cdata' = do
   env <- use rpcEnv
   extdata <- use rpcExt
   let cgas' = fromMaybe 90000 callgas
@@ -216,6 +218,7 @@ callVM toA fromA callgas gasPx callvalue ccode = do
         _envGas = cgas', -- TODO, not sure what env gas is ...
         _callValue = fromMaybe 0 callvalue,
         _gasPrice = fromMaybe 0 gasPx,
+        _callData = V.fromList cdata',
         _prog = toProg (concatMap toByteCode . parse $ ccode)
         }
       vmstate = emptyState extdata (fromIntegral cgas')

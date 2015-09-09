@@ -231,6 +231,15 @@ parse prog = toBC [] . zip [0..] $ prog
 parseHex :: String -> Either String [ByteCode]
 parseHex = either Left parse . hexToWord8s
 
+bcToHex :: [ByteCode] -> String
+bcToHex = wsToHex . concatMap toWords
+    where toWords (ByteCode _ i ws) = value (spec i):ws
+
+
+wsToHex :: [Word8] -> String
+wsToHex = concatMap (padHex . showHex)
+    where padHex [a] = ['0',a]
+          padHex a = a
 
 parseJSONHex name = withText name
                (\t -> case eitherReadHex t of

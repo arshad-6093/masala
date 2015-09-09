@@ -186,5 +186,6 @@ runBC_ bc = runVM (emptyState ex gas')
           gas' = 10000000
           acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
           ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
-          calldata = V.fromList [0,1,2,3,4]
+          Right cd = hexToWord8s "0dbe671f00000000000000000000000000000000000000000000000000000000" -- 6ebb8d83" -- "c6888fa10000000000000000000000000000000000000000000000000000000000000007"
+          calldata = V.fromList cd
           dbug = True

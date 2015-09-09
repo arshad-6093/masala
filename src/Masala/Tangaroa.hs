@@ -17,6 +17,9 @@ import Masala.VM.Types
 import Masala.VM
 import Control.Exception
 import qualified Data.Text as T
+import Masala.Instruction
+import Masala.VM.Dispatch (wsToSha3)
+import Data.Char
 
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)
 instance FromJSON RPCCmd
@@ -54,3 +57,6 @@ _runRPC :: String -> IO String
 _runRPC s = do
   r <- newIORef initRPCState
   runEvmRPC r s
+
+strToSha3 :: String -> [U256]
+strToSha3 = wsToSha3 . map (fromIntegral . ord)
