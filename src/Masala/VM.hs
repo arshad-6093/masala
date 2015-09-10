@@ -23,6 +23,7 @@ import Masala.Ext.Simple
 import qualified Data.Set as S
 import Masala.VM.Types
 import Masala.VM.Dispatch
+import Data.Word
 
 
 
@@ -172,7 +173,13 @@ run_ :: String -> IO (Either String (Output ExtData))
 run_ = either error runBC_ . parseHex
 
 runBC_ :: ToByteCode a => [a] -> IO (Either String (Output ExtData))
-runBC_ bc = runVM (emptyState ex gas')
+runBC_ c = runVM_ c [0,1,2,3,4]
+
+runHex :: String -> String -> IO (Either String (Output ExtData))
+runHex c d = runVM_ (either error id (parseHex c)) (either error id (hexToWord8s d))
+
+runVM_ :: ToByteCode a => [a] -> [Word8] -> IO (Either String (Output ExtData))
+runVM_ bc calld = runVM (emptyState ex gas')
             (Env dbug enableGas calldata api
              (toProg tbc)
              (_acctAddress acc)
@@ -186,6 +193,5 @@ runBC_ bc = runVM (emptyState ex gas')
           gas' = 10000000
           acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
           ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
-          Right cd = hexToWord8s "0dbe671f00000000000000000000000000000000000000000000000000000000" -- 6ebb8d83" -- "c6888fa10000000000000000000000000000000000000000000000000000000000000007"
-          calldata = V.fromList cd
+          calldata = V.fromList calld
           dbug = True

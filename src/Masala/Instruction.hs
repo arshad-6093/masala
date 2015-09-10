@@ -232,12 +232,12 @@ parseHex :: String -> Either String [ByteCode]
 parseHex = either Left parse . hexToWord8s
 
 bcToHex :: [ByteCode] -> String
-bcToHex = wsToHex . concatMap toWords
+bcToHex = w8sToHex . concatMap toWords
     where toWords (ByteCode _ i ws) = value (spec i):ws
 
 
-wsToHex :: [Word8] -> String
-wsToHex = concatMap (padHex . showHex)
+w8sToHex :: [Word8] -> String
+w8sToHex = concatMap (padHex . showHex)
     where padHex [a] = ['0',a]
           padHex a = a
 

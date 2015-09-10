@@ -171,8 +171,8 @@ ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blo
     Nothing -> throwError $ "ethCall: Bad address: " ++ show m
     Just acct -> do
       o <- callVM (fromMaybe toA fromA) toA callgas gasPx callvalue (_acctCode acct) (maybe [] getWords sdata)
-      liftIO $ putStrLn $ "call: Success, output=" ++ show o
-      return $ String $ T.pack $ show o -- TODO need toJSON
+      liftIO $ putStrLn $ "call: Success, output=" ++ w8sToHex o
+      return $ String $ T.pack $ w8sToHex o -- TODO need toJSON
 
 
 
@@ -228,7 +228,7 @@ callVM toA fromA callgas gasPx callvalue ccode cdata' = do
     Left s -> throwError $ "ERROR in callVM: " ++ s
     Right (vr, vs) -> case vr of
       Final o -> do
-        liftIO $ putStrLn $ "call: Success, output=" ++ show o
+        liftIO $ putStrLn $ "call: Success, output=" ++ w8sToHex o
         rpcEnv .= env'
         rpcExt .= _vmext vs
         return o

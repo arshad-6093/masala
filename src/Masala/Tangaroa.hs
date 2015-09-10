@@ -20,6 +20,8 @@ import qualified Data.Text as T
 import Masala.Instruction
 import Masala.VM.Dispatch (wsToSha3)
 import Data.Char
+import Data.Bits
+import Control.Monad
 
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)
 instance FromJSON RPCCmd
@@ -60,3 +62,15 @@ _runRPC s = do
 
 strToSha3 :: String -> [U256]
 strToSha3 = wsToSha3 . map (fromIntegral . ord)
+
+abiZero :: U256 -> U256
+abiZero a = a .&. (0xffffffff `shiftL` 224)
+
+_repl :: IO ()
+_repl = do
+  r <- newIORef initRPCState
+  forever $ do
+          putStr "> "
+          inp <- getLine
+          o <- runEvmRPC r inp
+          putStrLn o

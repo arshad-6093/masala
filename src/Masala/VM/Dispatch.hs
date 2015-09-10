@@ -18,6 +18,7 @@ import Masala.Gas
 import Data.Word
 import qualified Data.ByteArray as BA
 import Crypto.Hash
+import qualified Data.ByteString.Lazy as LBSW
 
 dispatch :: VM m e => Instruction -> (ParamSpec,[U256]) -> m (ControlFlow e)
 dispatch STOP _ = return Stop
@@ -311,8 +312,12 @@ sha3 = bhead . wsToSha3
 
 wsToSha3 :: [Word8] -> [U256]
 wsToSha3 = w8sToU256s . BA.unpack . hash256 . BA.pack
-    where hash256 :: BA.Bytes -> Digest SHA3_256
-          hash256 = hash
+
+hash256 :: BA.Bytes -> Digest SHA3_256
+hash256 = hash
+
+byteStringH :: LBSW.ByteString -> [U256]
+byteStringH = wsToSha3 . LBSW.unpack
 
 blockHash :: VM m e => U256 -> U256 -> m U256
 blockHash n blocknum = sha3 $ u256ToW8s (n + blocknum)
