@@ -18,7 +18,7 @@ import Masala.VM
 import Control.Exception
 import qualified Data.Text as T
 import Masala.Instruction
-import Masala.VM.Dispatch (wsToSha3)
+import Masala.VM.Dispatch (sha3)
 import Data.Char
 import Data.Bits
 import Control.Monad
@@ -60,8 +60,8 @@ _runRPC s = do
   r <- newIORef initRPCState
   runEvmRPC r s
 
-strToSha3 :: String -> [U256]
-strToSha3 = wsToSha3 . map (fromIntegral . ord)
+strToSha3 :: String -> U256
+strToSha3 = sha3 . map (fromIntegral . ord)
 
 abiZero :: U256 -> U256
 abiZero a = a .&. (0xffffffff `shiftL` 224)
@@ -74,3 +74,8 @@ _repl = do
           inp <- getLine
           o <- runEvmRPC r inp
           putStrLn o
+
+
+abi :: String -> [U256] -> String
+abi fn args = show (abiZero (strToSha3 fn)) ++ concatMap hex32 args
+    where hex32 = reverse . take 8 . (++ cycle "0") . reverse . showHex

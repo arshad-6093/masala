@@ -44,7 +44,7 @@ dispatch OR (_,[a,b]) = push (a .|. b) >> next
 dispatch XOR (_,[a,b]) = push (a `xor` b) >> next
 dispatch NOT (_,[a]) = push (complement a) >> next
 dispatch BYTE (_,[a,b]) = push (int a `byte` b) >> next
-dispatch SHA3 (_,[a,b]) = mloads a b >>= sha3 >>= push >> next
+dispatch SHA3 (_,[a,b]) = sha3 <$> mloads a b >>= push >> next
 dispatch ADDRESS _ = view address >>= push . fromIntegral >> next
 dispatch BALANCE (_,[a]) = maybe 0 (fromIntegral . view acctBalance) <$> addy (toAddress a) >>= push >> next
 dispatch ORIGIN _ = view origin >>= push . fromIntegral >> next
@@ -304,20 +304,8 @@ refund g = do
   xRun $ xRefund <@$> a <@*> g
 
 
-sha3 :: VM m e => [Word8] -> m U256
-sha3 = bhead . wsToSha3
-         where bhead [] = return 0
-               bhead [a] = return a
-               bhead (_:_) = err "sha3 resulted in > U256 size"
-
-wsToSha3 :: [Word8] -> [U256]
-wsToSha3 = w8sToU256s . BA.unpack . hash256 . BA.pack
-
-hash256 :: BA.Bytes -> Digest SHA3_256
-hash256 = hash
-
-byteStringH :: LBSW.ByteString -> [U256]
-byteStringH = wsToSha3 . LBSW.unpack
+sha3 :: [Word8] -> U256
+sha3 = head . w8sToU256s . BA.unpack . (hash :: BA.Bytes -> Digest Kekkak_256) . BA.pack
 
 blockHash :: VM m e => U256 -> U256 -> m U256
-blockHash n blocknum = sha3 $ u256ToW8s (n + blocknum)
+blockHash n blocknum = return $ sha3 $ u256ToW8s (n + blocknum)
