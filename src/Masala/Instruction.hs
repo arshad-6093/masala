@@ -1,28 +1,36 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Masala.Instruction where
 
 import Data.Word
-
 import Prelude hiding (LT,GT,EQ)
 import qualified Data.Map as M
-import Numeric
+import qualified Numeric as N
 import Data.DoubleWord
 import Data.Bits
+import Data.Char (intToDigit)
+import GHC.Generics
+import Data.Aeson
+import qualified Data.Text as T
+
+newtype U256 = U256 Word256 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic,Bits)
+instance Show U256 where show (U256 u) = showHex u
+instance FromJSON U256 where
+    parseJSON = parseJSONHex "U256"
 
 
-type U256 = Word256
-type S256 = Int256
+newtype S256 = S256 Int256 deriving (Num,Eq,Show,Ord,Bounded,Enum,Integral,Real,Generic,Bits)
+
+
 
 data ByteCode = ByteCode { bcIdx :: Int, bcInst :: Instruction, bcValue :: [Word8] }
           deriving (Eq)
 instance Show ByteCode where
     show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
-
-
-
 
 class ToByteCode a where
     toByteCode :: a -> [ByteCode]
@@ -189,24 +197,24 @@ valueToInst = M.fromList $ map assn [minBound .. maxBound]
     where assn i = (value (spec i),i)
 
 -- | convert hex string to Word8s.
-hexToWord8s :: String -> [Word8]
+hexToWord8s :: String -> Either String [Word8]
 hexToWord8s prog = conv 0 [] prog
-    where conv :: Int -> [Word8] -> String -> [Word8]
-          conv _ is [] = reverse is
-          conv _ _is [_c] = error $ "Malformed program, single char at end: " ++ prog
+    where conv :: Int -> [Word8] -> String -> Either String [Word8]
+          conv _ is [] = Right $ reverse is
+          conv _ _is [_c] = Left $ "Malformed program, single char at end: " ++ prog
           conv idx is (c1:c2:cs) =
-              case readHex [c1,c2] of
+              case N.readHex [c1,c2] of
                 [(w,"")] -> conv (succ idx) (w:is) cs
-                _ -> error $ "Invalid hex (index " ++
+                _ -> Left $ "Invalid hex (index " ++
                      show idx ++ ", value " ++ [c1,c2] ++ ")"
 
 -- | parse Word8s to bytecode rep.
-parse :: [Word8] -> [ByteCode]
+parse :: [Word8] -> Either String [ByteCode]
 parse prog = toBC [] . zip [0..] $ prog
-    where toBC bcs [] = reverse bcs
+    where toBC bcs [] = Right $ reverse bcs
           toBC bcs ((idx,v):ws) =
               case M.lookup v valueToInst of
-                Nothing -> err idx "Instruction expected"
+                Nothing -> err idx $ "Instruction expected, parsed: " ++ show (reverse bcs)
                 Just i ->
                     case paramSpec (spec i) of
                       PushW n -> push i idx n bcs ws
@@ -216,12 +224,35 @@ parse prog = toBC [] . zip [0..] $ prog
                   err idx ("PUSH" ++show n ++ ": not enough input")
               | otherwise =
                   toBC (ByteCode idx inst (map snd $ take n ws):bcs) (drop n ws)
-          err idx msg = error $ msg ++ " (index " ++ show idx ++
+          err idx msg = Left $ msg ++ " (index " ++ show idx ++
                         ", value " ++ show (prog !! idx) ++ ")"
 
 -- | parse hex to bytecode rep.
-parseHex :: String -> [ByteCode]
-parseHex = parse . hexToWord8s
+parseHex :: String -> Either String [ByteCode]
+parseHex = either Left parse . hexToWord8s
+
+bcToHex :: [ByteCode] -> String
+bcToHex = w8sToHex . concatMap toWords
+    where toWords (ByteCode _ i ws) = value (spec i):ws
+
+
+w8sToHex :: [Word8] -> String
+w8sToHex = concatMap (padHex . showHex)
+    where padHex [a] = ['0',a]
+          padHex a = a
+
+parseJSONHex name = withText name
+               (\t -> case eitherReadHex t of
+                         Right a -> return a
+                         Left err -> fail err)
+
+eitherReadHex :: (Eq a,Num a) => T.Text -> Either String a
+eitherReadHex = ph . drop0x . T.unpack where
+    ph s = case N.readHex s of
+             [(a,"")] -> Right a
+             _ -> Left $ "Invalid hex value " ++ s
+    drop0x ('0':'x':a) = a
+    drop0x a = a
 
 
 w8sToU256s :: [Word8] -> [U256]
@@ -362,29 +393,39 @@ spec DUP13 = Spec 140 0 1 (Dup 13)
 spec DUP14 = Spec 141 0 1 (Dup 14)
 spec DUP15 = Spec 142 0 1 (Dup 15)
 spec DUP16 = Spec 143 0 1 (Dup 16)
-spec SWAP1 = Spec 145 0 1 (Swap 1)
-spec SWAP2 = Spec 146 0 1 (Swap 2)
-spec SWAP3 = Spec 147 0 1 (Swap 3)
-spec SWAP4 = Spec 148 0 1 (Swap 4)
-spec SWAP5 = Spec 149 0 1 (Swap 5)
-spec SWAP6 = Spec 150 0 1 (Swap 6)
-spec SWAP7 = Spec 151 0 1 (Swap 7)
-spec SWAP8 = Spec 152 0 1 (Swap 8)
-spec SWAP9 = Spec 153 0 1 (Swap 9)
-spec SWAP10 = Spec 154 0 1 (Swap 10)
-spec SWAP11 = Spec 155 0 1 (Swap 11)
-spec SWAP12 = Spec 156 0 1 (Swap 12)
-spec SWAP13 = Spec 157 0 1 (Swap 13)
-spec SWAP14 = Spec 158 0 1 (Swap 14)
-spec SWAP15 = Spec 159 0 1 (Swap 15)
-spec SWAP16 = Spec 160 0 1 (Swap 16)
-spec LOG0 = Spec 0xa0 0 1 (Log 0)
-spec LOG1 = Spec 0xa1 0 1 (Log 1)
-spec LOG2 = Spec 0xa2 0 1 (Log 2)
-spec LOG3 = Spec 0xa3 0 1 (Log 3)
-spec LOG4 = Spec 0xa4 0 1 (Log 4)
+spec SWAP1 = Spec 144 0 1 (Swap 1)
+spec SWAP2 = Spec 145 0 1 (Swap 2)
+spec SWAP3 = Spec 146 0 1 (Swap 3)
+spec SWAP4 = Spec 147 0 1 (Swap 4)
+spec SWAP5 = Spec 148 0 1 (Swap 5)
+spec SWAP6 = Spec 149 0 1 (Swap 6)
+spec SWAP7 = Spec 150 0 1 (Swap 7)
+spec SWAP8 = Spec 151 0 1 (Swap 8)
+spec SWAP9 = Spec 152 0 1 (Swap 9)
+spec SWAP10 = Spec 153 0 1 (Swap 10)
+spec SWAP11 = Spec 154 0 1 (Swap 11)
+spec SWAP12 = Spec 155 0 1 (Swap 12)
+spec SWAP13 = Spec 156 0 1 (Swap 13)
+spec SWAP14 = Spec 157 0 1 (Swap 14)
+spec SWAP15 = Spec 158 0 1 (Swap 15)
+spec SWAP16 = Spec 159 0 1 (Swap 16)
+spec LOG0 = Spec 0xa0 2 1 (Log 0)
+spec LOG1 = Spec 0xa1 3 1 (Log 1)
+spec LOG2 = Spec 0xa2 4 1 (Log 2)
+spec LOG3 = Spec 0xa3 5 1 (Log 3)
+spec LOG4 = Spec 0xa4 6 1 (Log 4)
 spec CREATE = Spec 0xf0 3 1 Empty
 spec CALL = Spec 0xf1 7 1 Empty
 spec CALLCODE = Spec 0xf2 7 1 Empty
 spec RETURN = Spec 0xf3 2 0 Empty
 spec SUICIDE = Spec 0xff 1 0 Empty
+
+
+showBinary :: (Show a, Integral a) => a -> String
+showBinary i = N.showIntAtBase 2 intToDigit i ""
+
+showHex :: (Integral a, Show a, Eq a, Num a) => a -> String
+showHex = (`N.showHex` "")
+
+showHexs :: (Integral a, Show a, Eq a, Num a) => [a] -> String
+showHexs as = "0x" ++ concatMap showHex as

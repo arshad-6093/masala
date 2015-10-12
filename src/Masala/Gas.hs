@@ -5,13 +5,12 @@ import Masala.Instruction
 import qualified Data.Map as M
 import Prelude hiding (EQ,LT,GT)
 import Data.Maybe
-
-type Gas = Int
+import Masala.Ext
 
 data GasCalc =
     MemSize U256
         | StoreOp U256 U256 -- memloc, value
-        | GasCall U256 (Maybe U256) -- memsize, calladdy
+        | GasCall U256 (Maybe Address) -- memsize, calladdy
           deriving (Eq,Show)
 
 -- TODO these differ from the go code but match the yellow paper ...
@@ -111,7 +110,7 @@ wordSize = length . u256ToW8s
 callGas :: Instruction -> [U256] -> (Gas,Maybe GasCalc)
 callGas i [g,t,gl,io,il,oo,ol] = (fromIntegral g + (if gl > 0 then gas_callvalue else 0),
                                   Just (GasCall (io + il + oo + ol)
-                                                (if i == CALL then Just t else Nothing)))
+                                                (if i == CALL then Just (toAddress t) else Nothing)))
 callGas _ _ = (0,Nothing) -- error will be caught in dispatch
 
 iGas :: Instruction -> (ParamSpec,[U256]) -> (Gas,Maybe GasCalc)
