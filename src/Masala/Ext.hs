@@ -77,7 +77,7 @@ useExt f = fmap f getExt
 getExt :: ExtOp e e
 getExt = ExtOp $ \e -> (e,e)
 
-xover :: Profunctor p => Setting p s s a b -> p a b -> ExtOp s ()
+xover :: ASetter s s a b -> (a -> b) -> ExtOp s ()
 xover l f = setExt $ over l f
 
 xfirstOf :: Getting (Leftmost a) s a -> ExtOp s (Maybe a)
