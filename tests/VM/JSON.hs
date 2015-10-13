@@ -154,7 +154,7 @@ runVMTest dbg tname test = do
              , _envGas = fromMaybe 0 (vgas test)
              , _gasPrice = egasPrice ex
              , _callValue = evalue ex
-             , _prevHash = previousHash tenv
+             , _prevHash = fromMaybe 0 $ previousHash tenv
              , _coinbase = currentCoinbase tenv
              , _timestamp = currentTimestamp tenv
              , _number = currentNumber tenv
@@ -205,7 +205,7 @@ data TestEnv = TestEnv {
     , currentGasLimit :: Maybe U256
     , currentNumber :: U256
     , currentTimestamp :: U256
-    , previousHash :: U256
+    , previousHash :: Maybe U256
 } deriving (Eq,Show,Generic)
 instance FromJSON TestEnv
 

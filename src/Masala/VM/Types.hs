@@ -14,7 +14,7 @@ import Masala.Ext
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import Control.Monad.Reader
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Except
 
 

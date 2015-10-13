@@ -21,7 +21,7 @@ import Masala.Word
 import Masala.Instruction
 import Masala.VM.Types
 import Masala.VM
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Data.Maybe
 import Control.Lens
 import qualified Data.Vector as V

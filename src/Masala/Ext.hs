@@ -13,7 +13,7 @@ import Data.Aeson hiding ((.=))
 import Control.Lens hiding (op)
 import qualified Data.Map.Strict as M
 import Control.Monad.Reader
-import Control.Monad.State
+import Control.Monad.State.Strict
 import GHC.Generics
 
 type Gas = Int

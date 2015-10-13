@@ -2,15 +2,34 @@ module DispatchSpec where
 
 import Masala.VM.Types
 import Masala.VM.Dispatch
-import Masala.Instruction
+import Masala.Instruction hiding (Spec)
 import Masala.Word
 import Masala.Ext
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
+import Control.Monad.State.Strict hiding (state)
+import Test.Hspec
+
+type Result a = Either String (a,VMState Mocks)
+
+testMemory :: Spec
+testMemory = do
+  it "mstore->mload" $ (runD $ mstore 0 20 >> mload 0) `shouldOutput` 20
+  it "mstore8->mload" $ (runD $ mstore8 31 20 >> mload 0) `shouldOutput` 20
+
+shouldOutput :: (Eq a,Show a) => IO (Result a) -> a -> Expectation
+shouldOutput action expected = do
+  a <- action
+  case a of
+    Left s -> expectationFailure $ "Failure occured: " ++ show s
+    Right (r,_) -> r `shouldBe` expected
 
 
---runD ::
---runD = unVM state env
+runD :: VM Mocks a -> IO (Result a)
+runD act = unVM state env $ do
+             a <- act
+             s <- get
+             return (a,s)
 
 env :: Env Mocks
 env = Env True False V.empty xapi (Prog V.empty M.empty) 0 0 0 0 0 0 0 0 0 0 0 0
@@ -24,6 +43,8 @@ data Mocks = Mocks String [Ext Mocks] |
 instance Show Mocks where
     show (Mocks s _) = s
     show (Mock s _) = s
+
+instance Eq Mocks where _ == _ = True
 
 mock :: Ext Mocks
 mock = Ext {
