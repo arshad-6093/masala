@@ -10,21 +10,20 @@ module Masala.RPC where
 
 import Data.Aeson hiding ((.=))
 import qualified Data.Aeson as A ((.=))
-import Data.Aeson.Types (fieldLabelModifier,defaultOptions,Parser)
+import Data.Aeson.Types (fieldLabelModifier,Parser)
 import Control.Monad.Except
 import Masala.Ext
 import qualified Data.Text as T
 import qualified Data.Char as C
 import qualified Data.HashMap.Strict as HM
 import GHC.Generics
+import Masala.Word
 import Masala.Instruction
-import Data.Word
 import Masala.VM.Types
 import Masala.VM
 import Control.Monad.State
 import Data.Maybe
 import Control.Lens
-import Data.Aeson.Lens
 import qualified Data.Vector as V
 
 data RPCState e = RPCState { _rpcEnv :: Env e, _rpcExt :: e }
@@ -42,7 +41,7 @@ newtype WordArray = WordArray { getWords :: [Word8] }
     deriving (Eq,Generic)
 instance FromJSON WordArray where
     parseJSON = withText "WordArray"
-                (\t -> case hexToWord8s (drop 2 $ T.unpack t) of
+                (\t -> case readHexs (drop 2 $ T.unpack t) of
                          Right a -> return (WordArray (dropWhile (==0) a))
                          Left err -> fail err)
 instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHex a
@@ -171,8 +170,8 @@ ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blo
     Nothing -> throwError $ "ethCall: Bad address: " ++ show m
     Just acct -> do
       o <- callVM (fromMaybe toA fromA) toA callgas gasPx callvalue (_acctCode acct) (maybe [] getWords sdata)
-      liftIO $ putStrLn $ "call: Success, output=" ++ w8sToHex o
-      return $ String $ T.pack $ w8sToHex o -- TODO need toJSON
+      liftIO $ putStrLn $ "call: Success, output=" ++ showHexs o
+      return $ String $ T.pack $ showHexs o -- TODO need toJSON
 
 
 
@@ -228,7 +227,7 @@ callVM toA fromA callgas gasPx callvalue ccode cdata' = do
     Left s -> throwError $ "ERROR in callVM: " ++ s
     Right (vr, vs) -> case vr of
       Final o -> do
-        liftIO $ putStrLn $ "call: Success, output=" ++ w8sToHex o
+        liftIO $ putStrLn $ "call: Success, output=" ++ showHexs o
         rpcEnv .= env'
         rpcExt .= _vmext vs
         return o

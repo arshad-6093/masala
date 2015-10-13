@@ -12,6 +12,7 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Lens hiding (op)
 import Masala.Instruction
+import Masala.Word
 import Control.Monad.Except
 import qualified Data.Vector as V
 import Control.Applicative
@@ -23,7 +24,6 @@ import Masala.Ext.Simple
 import qualified Data.Set as S
 import Masala.VM.Types
 import Masala.VM.Dispatch
-import Data.Word
 
 
 
@@ -116,7 +116,7 @@ exec = do
   then dispatch i (pspec,svals)
   else mapM_ push (w8sToU256s ws) >> next
 
-handleGas :: VM m e => Instruction -> ParamSpec -> [U256] -> m ()
+handleGas :: VM m e => Instruction -> Maybe ParamSpec -> [U256] -> m ()
 handleGas i ps svs = do
   let (callg,a) = computeGas i (ps,svs)
   calcg <- case a of
@@ -176,7 +176,7 @@ runBC_ :: ToByteCode a => [a] -> IO (Either String (Output ExtData))
 runBC_ c = runVM_ c [0,1,2,3,4]
 
 runHex :: String -> String -> IO (Either String (Output ExtData))
-runHex c d = runVM_ (either error id (parseHex c)) (either error id (hexToWord8s d))
+runHex c d = runVM_ (either error id (parseHex c)) (either error id (readHexs d))
 
 runVM_ :: ToByteCode a => [a] -> [Word8] -> IO (Either String (Output ExtData))
 runVM_ bc calld = runVM (emptyState ex gas')

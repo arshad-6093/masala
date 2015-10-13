@@ -4,10 +4,10 @@
 module Masala.VM.Dispatch where
 
 import Masala.Instruction
+import Masala.Word
 import Masala.VM.Types
 import Masala.Ext
 import Control.Monad
-import Data.Bits
 import Prelude hiding (LT,GT,EQ,log)
 import Control.Lens
 import Data.Maybe
@@ -15,12 +15,13 @@ import qualified Data.Vector as V
 import qualified Data.Map.Strict as M
 import Control.Monad.Except
 import Masala.Gas
-import Data.Word
 import qualified Data.ByteArray as BA
 import Crypto.Hash
-import qualified Data.ByteString.Lazy as LBSW
 
-dispatch :: VM m e => Instruction -> (ParamSpec,[U256]) -> m (ControlFlow e)
+infMod :: (Integer -> Integer -> Integer) -> U256 -> U256 -> U256 -> U256
+infMod f a b c = fromIntegral ((fromIntegral a `f` fromIntegral b) `mod` fromIntegral c)
+
+dispatch :: VM m e => Instruction -> (Maybe ParamSpec,[U256]) -> m (ControlFlow e)
 dispatch STOP _ = return Stop
 dispatch ADD (_,[a,b]) = push (a + b) >> next
 dispatch MUL (_,[a,b]) = push (a * b) >> next
@@ -29,8 +30,8 @@ dispatch DIV (_,[a,b]) = push (if b == 0 then 0 else a `div` b) >> next
 dispatch SDIV (_,[a,b]) = pushs (sgn a `sdiv` sgn b) >> next
 dispatch MOD (_,[a,b]) = push (if b == 0 then 0 else a `mod` b) >> next
 dispatch SMOD (_,[a,b]) = pushs (sgn a `smod` sgn b) >> next
-dispatch ADDMOD (_,[a,b,c]) = push (if c == 0 then 0 else (a + b) `mod` c) >> next
-dispatch MULMOD (_,[a,b,c]) = push (if c == 0 then 0 else (a * b) `mod` c) >> next
+dispatch ADDMOD (_,[a,b,c]) = push (if c == 0 then 0 else infMod (+) a b c) >> next
+dispatch MULMOD (_,[a,b,c]) = push (if c == 0 then 0 else infMod (*) a b c) >> next
 dispatch EXP (_,[a,b]) = push (a ^ b) >> next
 dispatch SIGNEXTEND (_,[a,b]) = push (int a `signextend` b) >> next
 dispatch LT (_,[a,b]) = pushb (a < b) >> next
@@ -82,9 +83,9 @@ dispatch MSIZE _ = fromIntegral . (* 8) . M.size <$> use mem >>= push >> next
 dispatch GAS _ = fromIntegral <$> use gas >>= push >> next
 dispatch JUMPDEST _ = next -- per spec: "Mark a valid destination for jumps."
                            -- "This operation has no effect on machine state during execution."
-dispatch _ (Dup n,_) = dup n >> next
-dispatch _ (Swap n,_) = swap n >> next
-dispatch _ (Log n,args) = log n args >> next
+dispatch _ (Just (Dup n),_) = dup n >> next
+dispatch _ (Just (Swap n),_) = swap n >> next
+dispatch _ (Just (Log n),args) = log n args >> next
 dispatch CREATE (_,[a,b,c]) = create (fromIntegral a) b (fromIntegral c)
 dispatch CALL (_,[g,t,gl,io,il,oo,ol]) =
     let a = toAddress t in
@@ -94,7 +95,7 @@ dispatch CALLCODE (_,[g,t,gl,io,il,oo,ol]) =
     doCall (fromIntegral g) a (toAddress t) (fromIntegral gl) io il oo ol
 dispatch RETURN (_,[a,b]) = Return <$> mloads a b
 dispatch SUICIDE (_,[a]) = suicide (toAddress a)
-dispatch _ ps = err $ "Unsupported operation [" ++ show ps ++ "]"
+dispatch i ps = err $ "Unsupported operation/arity/spec: " ++ show i ++ ", " ++ show ps
 
 
 callDataLoad :: VM m e => Int -> m U256
@@ -244,6 +245,7 @@ log n (mstart:msize:topics)
         b <- view number
         d <- mloads mstart msize
         xRun $ xLog <@$> LogEntry a b topics d
+log n ws = err $ "Dispatch error LOG" ++ show n ++ ", expected 3 args: " ++ show ws
 
 sdiv :: S256 -> S256 -> S256
 sdiv a b | b == 0 = 0

@@ -8,10 +8,9 @@
 
 module Masala.Ext where
 
-import Masala.Instruction
+import Masala.Word
 import Data.Aeson hiding ((.=))
 import Control.Lens hiding (op)
-import Data.Word
 import qualified Data.Map.Strict as M
 import Control.Monad.Reader
 import Control.Monad.State
@@ -50,10 +49,10 @@ instance Monad (ExtOp e) where
     a >>= f = ExtOp $ \e -> (\(a',e') -> runExtOp (f a') e')  $ runExtOp a e
 
 
-class HasExtState e a | e -> a where
+class HasExtState e a | a -> e where
     ext :: Lens' a e
 
-class HasExtApi e a | e -> a where
+class HasExtApi e a | a -> e where
     extApi :: Lens' a (Ext e)
 
 

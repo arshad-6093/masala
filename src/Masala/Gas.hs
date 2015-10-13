@@ -1,6 +1,7 @@
 {-# LANGUAGE TupleSections #-}
 module Masala.Gas where
 
+import Masala.Word
 import Masala.Instruction
 import qualified Data.Map as M
 import Prelude hiding (EQ,LT,GT)
@@ -97,7 +98,7 @@ fixedGas = M.fromList $
               ,(JUMPDEST,gas_jumpdest)]
 
 
-computeGas :: Instruction -> (ParamSpec,[U256]) -> (Gas,Maybe GasCalc)
+computeGas :: Instruction -> (Maybe ParamSpec,[U256]) -> (Gas,Maybe GasCalc)
 computeGas i p = (\(g,c) -> (g + fgas,c)) $ iGas i p
                  where fgas = fromMaybe 0 $ M.lookup i fixedGas
 
@@ -113,8 +114,8 @@ callGas i [g,t,gl,io,il,oo,ol] = (fromIntegral g + (if gl > 0 then gas_callvalue
                                                 (if i == CALL then Just (toAddress t) else Nothing)))
 callGas _ _ = (0,Nothing) -- error will be caught in dispatch
 
-iGas :: Instruction -> (ParamSpec,[U256]) -> (Gas,Maybe GasCalc)
-iGas _ (Log n,[a,b]) = (gas_log + (n * gas_logtopic) + (fromIntegral b * gas_logdata),
+iGas :: Instruction -> (Maybe ParamSpec,[U256]) -> (Gas,Maybe GasCalc)
+iGas _ (Just (Log n),[a,b]) = (gas_log + (n * gas_logtopic) + (fromIntegral b * gas_logdata),
                        memSize a b)
 iGas EXP (_,[_a,b]) = (gas_exp + (wordSize b * gas_expbyte), Nothing)
 iGas SSTORE (_,[a,b]) = (0,Just $ StoreOp a b)

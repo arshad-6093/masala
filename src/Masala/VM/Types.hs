@@ -8,15 +8,14 @@
 module Masala.VM.Types where
 
 import Control.Lens
+import Masala.Word
 import Masala.Instruction
-import Masala.Gas
 import Masala.Ext
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except
-import Data.Word
 
 
 data Prog = Prog {

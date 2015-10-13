@@ -17,10 +17,9 @@ import Masala.VM.Types
 import Masala.VM
 import Control.Exception
 import qualified Data.Text as T
-import Masala.Instruction
+import Masala.Word
 import Masala.VM.Dispatch (sha3)
 import Data.Char
-import Data.Bits
 import Control.Monad
 
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)

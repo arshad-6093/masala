@@ -5,13 +5,13 @@
 module VM.JSON where
 
 import qualified Data.Map.Strict as M
+import Masala.Word
 import Masala.Instruction
 import Masala.Ext
 import Masala.Ext.Simple
 import Masala.VM
 import Masala.VM.Types
 import Masala.RPC
-import Data.Word
 import Data.Aeson hiding ((.=),Success)
 import Data.Aeson.Types hiding (parse,Success)
 import GHC.Generics
@@ -24,7 +24,6 @@ import qualified Data.Set as S
 import Control.Lens
 import Control.Exception
 import Control.Monad
-import Control.Lens hiding ((.=))
 import Data.Aeson.Lens
 import qualified Data.HashMap.Strict as HM
 
@@ -103,7 +102,7 @@ data TestResult =
 instance Show TestResult where
     show (Success n) = "\nSUCCESS: " ++ n
     show (Err n e) = "\nERROR: " ++ n ++ ": " ++ e
-    show (Failure n t o e) = "\nFAILURE: " ++ n ++ ": " ++ e
+    show (Failure n _t _o e) = "\nFAILURE: " ++ n ++ ": " ++ e
 
 validateRun :: String -> VMTest -> Output ExtData -> TestResult
 validateRun n t o = either (Failure n t o) (const (Success n)) check
@@ -239,10 +238,10 @@ data TestAcct = TestAcct {
 } deriving (Eq,Show,Generic)
 instance FromJSON TestAcct where parseJSON = parseDropPfxJSON 1
 
-instance (FromJSON v) => FromJSON (M.Map U256 v) where
-    parseJSON = parseMap (either error id . eitherReadHex)
-instance (FromJSON v) => FromJSON (M.Map Address v) where
-    parseJSON = parseMap (either error id . eitherReadHex)
+instance FromJSON v => FromJSON (M.Map U256 v) where
+    parseJSON = parseMap (either error id . readHex)
+instance FromJSON v => FromJSON (M.Map Address v) where
+    parseJSON = parseMap (either error id . readHex)
 
 
 parseMap :: (FromJSON (M.Map k' v), Ord k) =>
