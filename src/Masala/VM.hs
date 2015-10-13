@@ -47,7 +47,7 @@ emptyState = VMState [] 0 M.empty
 
 runVM :: (MonadIO m, Functor m, Show ext) =>
          VMState ext -> Env ext -> Maybe (Resume ext) -> m (Either String (Output ext))
-runVM vm env callR = evalStateT (runReaderT (runExceptT go) env) vm >>= postEx env
+runVM vm env callR = unVM vm env go >>= postEx env
     where go = (,) <$> stepVM callR <*> get
 
 

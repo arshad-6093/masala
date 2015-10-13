@@ -95,6 +95,11 @@ type VM m e = (Monad m
               ,MonadReader (Env e) m
               )
 
+unVM :: (MonadIO m, Functor m, Show ext) =>
+         VMState ext -> Env ext ->
+         ExceptT String (ReaderT (Env ext) (StateT (VMState ext) m)) a -> m (Either String a)
+unVM vm env go = evalStateT (runReaderT (runExceptT go) env) vm
+
 data ControlFlow e =
           Next
         | Stop
