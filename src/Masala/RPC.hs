@@ -30,12 +30,8 @@ data RPCState e = RPCState { _rpcEnv :: Env e, _rpcExt :: e }
 $(makeLenses ''RPCState)
 
 
-type RPC m e = (Monad m
-              ,MonadIO m
-              ,MonadState (RPCState e) m
-              ,MonadError String m
-              ,Show e
-              )
+type RPC e = ExceptT String (StateT (RPCState e) IO)
+
 
 newtype WordArray = WordArray { getWords :: [Word8] }
     deriving (Eq,Generic)
@@ -131,7 +127,7 @@ rpcs :: HM.HashMap String RPCall
 rpcs = foldl (\m r -> HM.insert (lc1 (show r)) r m) HM.empty [minBound..maxBound]
     where lc1 (c:cs) = C.toLower c:cs
 
-runRPC :: RPC m e => String -> [Value] -> m Value
+runRPC :: Show e => String -> [Value] -> RPC e Value
 runRPC c v = do
   rpc <- maybe (throwError $ "Invalid RPC: " ++ c) return $ HM.lookup c rpcs
   dispatchRPC rpc v
@@ -144,22 +140,22 @@ runRPCIO s c v = do
     Right o -> return (o,s')
 
 
-dispatchRPC :: RPC m e => RPCall -> [Value] -> m Value
+dispatchRPC :: Show e => RPCall -> [Value] -> RPC e Value
 dispatchRPC Eth_sendTransaction [a] = arg a >>= sendTransaction
 dispatchRPC Eth_call [a,b] = arg2 a b >>= uncurry ethCall
 dispatchRPC m a = throwError $ "Unsupported RPC: " ++ show m ++ ", " ++ show a
 
-arg :: (RPC m e, FromJSON a) => Value -> m a
+arg :: (FromJSON a) => Value -> RPC e a
 arg v = case fromJSON v of
           Error err -> throwError $ "JSON parse failure: " ++ err
           Success a -> return a
 
-arg2 :: (RPC m e, FromJSON a, FromJSON b) => Value -> Value -> m (a,b)
+arg2 :: (FromJSON a, FromJSON b) => Value -> Value -> RPC e (a,b)
 arg2 a b = (,) <$> arg a <*> arg b
 
 
 
-ethCall :: RPC m e => EthCall -> U256 -> m Value
+ethCall :: Show e => EthCall -> U256 -> RPC e Value
 ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blockNo TODO
   liftIO $ putStrLn $ "ethCall: " ++ show m -- TODO handle as "debug"
   env <- use rpcEnv
@@ -175,7 +171,7 @@ ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blo
 
 
 
-sendTransaction :: RPC m e => SendTran -> m Value
+sendTransaction :: Show e => SendTran -> RPC e Value
 sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
   liftIO $ putStrLn $ "sendTransaction: " ++ show m -- TODO handle as "debug"
   env <- use rpcEnv
@@ -205,7 +201,7 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
 
 
 
-callVM :: RPC m e => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [Word8] -> [Word8] -> m [Word8]
+callVM :: (Show e) => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [Word8] -> [Word8] -> RPC e [Word8]
 callVM toA fromA callgas gasPx callvalue ccode cdata' = do
   env <- use rpcEnv
   extdata <- use rpcExt
@@ -222,7 +218,7 @@ callVM toA fromA callgas gasPx callvalue ccode cdata' = do
         }
       vmstate = emptyState extdata (fromIntegral cgas')
   liftIO $ putStrLn $ "callVM: " ++ show vmstate ++ ", " ++ show cgas'
-  r <- runVM vmstate env' Nothing -- TODO, this should be asynchronous, returning "transaction hash"
+  r <- liftIO $ runVM vmstate env' Nothing -- TODO, this should be asynchronous, returning "transaction hash"
   case r of
     Left s -> throwError $ "ERROR in callVM: " ++ s
     Right (vr, vs) -> case vr of

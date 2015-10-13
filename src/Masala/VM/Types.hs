@@ -88,16 +88,11 @@ data VMResult =
 
 type Output e = (VMResult, VMState e)
 
-type VM m e = (Monad m
-              ,MonadIO m
-              ,MonadState (VMState e) m
-              ,MonadError String m
-              ,MonadReader (Env e) m
-              )
+type VM ext = ExceptT String (ReaderT (Env ext) (StateT (VMState ext) IO))
 
-unVM :: (MonadIO m, Functor m, Show ext) =>
-         VMState ext -> Env ext ->
-         ExceptT String (ReaderT (Env ext) (StateT (VMState ext) m)) a -> m (Either String a)
+
+unVM :: (Show ext) =>
+         VMState ext -> Env ext -> VM ext a -> IO (Either String a)
 unVM vm env go = evalStateT (runReaderT (runExceptT go) env) vm
 
 data ControlFlow e =

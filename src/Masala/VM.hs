@@ -13,7 +13,6 @@ import Control.Monad.State.Strict
 import Control.Lens hiding (op)
 import Masala.Instruction
 import Masala.Word
-import Control.Monad.Except
 import qualified Data.Vector as V
 import Control.Applicative
 import Prelude hiding (LT,GT,EQ,log)
@@ -32,7 +31,7 @@ toProg bc = Prog (V.fromList bc) (M.fromList (zipWith idx [0..] bc))
     where idx c (ByteCode n _ _) = (fromIntegral n,c)
 
 
-forward :: VM m e => m Bool
+forward :: VM e Bool
 forward = do
   c <- use ctr
   (Prog p _) <- view prog
@@ -45,14 +44,14 @@ forward = do
 emptyState :: e -> Gas -> VMState e
 emptyState = VMState [] 0 M.empty
 
-runVM :: (MonadIO m, Functor m, Show ext) =>
-         VMState ext -> Env ext -> Maybe (Resume ext) -> m (Either String (Output ext))
+runVM :: (Show ext) =>
+         VMState ext -> Env ext -> Maybe (Resume ext) -> IO (Either String (Output ext))
 runVM vm env callR = unVM vm env go >>= postEx env
     where go = (,) <$> stepVM callR <*> get
 
 
-postEx :: (MonadIO m, Functor m, Show ext) =>
-          Env ext -> Either String (Output ext) -> m (Either String (Output ext))
+postEx :: (Show ext) =>
+          Env ext -> Either String (Output ext) -> IO (Either String (Output ext))
 postEx _ l@(Left _) = return l
 postEx _ r@(Right (Final {},_)) = return r
 postEx env (Right (Call g addr codes _glimit cdata action, vm)) = do
@@ -73,7 +72,7 @@ postEx env (Right (Call g addr codes _glimit cdata action, vm)) = do
             runVM vm env (Just $ Resume 1 o action (view ext vm'))
 
 
-stepVM :: (Show e, VM m e) => Maybe (Resume e) -> m VMResult
+stepVM :: (Show e) => Maybe (Resume e) -> VM e VMResult
 stepVM r = do
   let done ws = do
              doDebug (get >>= liftIO . print)
@@ -105,7 +104,7 @@ stepVM r = do
 
 
 
-exec :: (Show e, VM m e) => m (ControlFlow e)
+exec :: (Show e) => VM e (ControlFlow e)
 exec = do
   bc@(ByteCode _ i ws) <- current
   let (Spec _ stackin _ pspec) = spec i
@@ -116,7 +115,7 @@ exec = do
   then dispatch i (pspec,svals)
   else mapM_ push (w8sToU256s ws) >> next
 
-handleGas :: VM m e => Instruction -> Maybe ParamSpec -> [U256] -> m ()
+handleGas :: Instruction -> Maybe ParamSpec -> [U256] -> VM e ()
 handleGas i ps svs = do
   let (callg,a) = computeGas i (ps,svs)
   calcg <- case a of
@@ -127,7 +126,7 @@ handleGas i ps svs = do
                         (GasCall sz addr) -> (+) <$> computeMemGas sz <*> computeCallGas addr
   deductGas (calcg + callg)
 
-computeMemGas :: VM m e => U256 -> m Gas
+computeMemGas :: U256 -> VM e Gas
 computeMemGas newSzBytes = do
   let toWordSize v = (v + 31) `div` 32
       newSzWords = fromIntegral $ toWordSize newSzBytes
@@ -137,7 +136,7 @@ computeMemGas newSzBytes = do
            then fee newSzWords - fee oldSzWords
            else 0
 
-computeStoreGas :: VM m e => U256 -> U256 -> m Gas
+computeStoreGas :: U256 -> U256 -> VM e Gas
 computeStoreGas l v' = do
   v <- mload l
   if v == 0 && v' /= 0
@@ -147,19 +146,19 @@ computeStoreGas l v' = do
        else return gas_sreset
 
 
-computeCallGas :: VM m e => Maybe Address -> m Gas
+computeCallGas :: Maybe Address -> VM e Gas
 computeCallGas Nothing = return 0
 computeCallGas (Just a) = do
   isNew <- xRun $ xIsCreate <@$> a
   return $ if isNew then gas_callnewaccount else 0
 
 
-doDebug :: VM m e => m () -> m ()
+doDebug :: VM e () -> VM e ()
 doDebug a = do
   d <- view debug
   when d a
 
-debugOut :: (Show e, VM m e) => ByteCode -> [U256] -> m ()
+debugOut :: (Show e) => ByteCode -> [U256] -> VM e ()
 debugOut i svals = do
   vm <- get
   liftIO $ print (i,svals,vm)
