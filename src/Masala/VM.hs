@@ -75,7 +75,7 @@ postEx env (Right (Call g addr codes _glimit cdata action, vm)) = do
 stepVM :: (Show e) => Maybe (Resume e) -> VM e VMResult
 stepVM r = do
   let done ws = do
-             doDebug (get >>= liftIO . print)
+             doDebug (get >>= \s -> liftIO $ print (ws,s))
              return (Final ws)
   cf <- case r of
           Nothing -> exec
@@ -113,7 +113,7 @@ exec = do
   handleGas i pspec svals
   if null ws
   then dispatch i (pspec,svals)
-  else mapM_ push (w8sToU256s ws) >> next
+  else mapM_ push (u8sToU256s ws) >> next
 
 handleGas :: Instruction -> Maybe ParamSpec -> [U256] -> VM e ()
 handleGas i ps svs = do
@@ -177,7 +177,7 @@ runBC_ c = runVM_ c [0,1,2,3,4]
 runHex :: String -> String -> IO (Either String (Output ExtData))
 runHex c d = runVM_ (either error id (parseHex c)) (either error id (readHexs d))
 
-runVM_ :: ToByteCode a => [a] -> [Word8] -> IO (Either String (Output ExtData))
+runVM_ :: ToByteCode a => [a] -> [U8] -> IO (Either String (Output ExtData))
 runVM_ bc calld = runVM (emptyState ex gas')
             (Env dbug enableGas calldata api
              (toProg tbc)
@@ -190,7 +190,7 @@ runVM_ bc calld = runVM (emptyState ex gas')
           addr = 123456
           enableGas = True
           gas' = 10000000
-          acc = ExtAccount (bcsToWord8s tbc) 0 addr M.empty
+          acc = ExtAccount (bcsToU8s tbc) 0 addr M.empty
           ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
           calldata = V.fromList calld
           dbug = True

@@ -26,7 +26,7 @@ data Prog = Prog {
 }
 
 type Stack = [U256]
-type Mem = M.Map U256 Word8
+type Mem = M.Map U256 U8
 type Ctr = Int
 data VMState e = VMState {
       _stack :: Stack
@@ -45,7 +45,7 @@ data CallAction = SaveMem U256 U256 | SaveCode Address deriving (Eq,Show)
 
 data Resume e = Resume {
       rPush :: U256,
-      rResult ::[Word8],
+      rResult ::[U8],
       rAction :: CallAction,
       rExt :: e
     } deriving (Eq,Show)
@@ -54,7 +54,7 @@ data Resume e = Resume {
 data Env e = Env {
       _debug :: Bool
     , _doGas :: Bool
-    , _callData :: V.Vector Word8
+    , _callData :: V.Vector U8
     , _envExtApi :: Ext e
     , _prog :: Prog
     , _address :: Address
@@ -76,13 +76,13 @@ $(makeLenses ''Env)
 instance HasExtApi e (Env e) where extApi = envExtApi
 
 data VMResult =
-    Final { fReturn :: [Word8] }
+    Final { fReturn :: [U8] }
         | Call {
             cGas :: Gas,
             cAcct :: ExtAccount,
-            cCode :: [Word8],
+            cCode :: [U8],
             cGasLimit :: Gas,
-            cData :: [Word8],
+            cData :: [U8],
             cAction :: CallAction }
           deriving (Eq,Show)
 
@@ -99,6 +99,6 @@ data ControlFlow e =
           Next
         | Stop
         | Jump Int
-        | Return [Word8]
+        | Return [U8]
         | Yield VMResult
     deriving (Show)

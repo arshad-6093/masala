@@ -33,7 +33,7 @@ $(makeLenses ''RPCState)
 type RPC e = ExceptT String (StateT (RPCState e) IO)
 
 
-newtype WordArray = WordArray { getWords :: [Word8] }
+newtype WordArray = WordArray { getWords :: [U8] }
     deriving (Eq,Generic)
 instance FromJSON WordArray where
     parseJSON = withText "WordArray"
@@ -201,7 +201,7 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
 
 
 
-callVM :: (Show e) => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [Word8] -> [Word8] -> RPC e [Word8]
+callVM :: (Show e) => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [U8] -> [U8] -> RPC e [U8]
 callVM toA fromA callgas gasPx callvalue ccode cdata' = do
   env <- use rpcEnv
   extdata <- use rpcExt

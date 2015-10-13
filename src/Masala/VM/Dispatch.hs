@@ -56,13 +56,13 @@ dispatch CALLDATASIZE _ = fromIntegral . V.length <$> view callData >>= push >> 
 dispatch CALLDATACOPY (_,[a,b,c]) = V.toList <$> view callData >>=
                                     mstores a b c >> next
 dispatch CODESIZE _ = fromIntegral . V.length . pCode <$> view prog >>= push >> next
-dispatch CODECOPY (_,[a,b,c]) = bcsToWord8s . V.toList . pCode <$> view prog >>=
+dispatch CODECOPY (_,[a,b,c]) = bcsToU8s . V.toList . pCode <$> view prog >>=
                                 codeCopy a (int b) (int c) >> next
 dispatch GASPRICE _ = view gasPrice >>= push >> next
 dispatch EXTCODESIZE (_,[a]) =
     maybe 0 (fromIntegral . length . view acctCode) <$> addy (toAddress a) >>= push >> next
 dispatch EXTCODECOPY (_,[a,b,c,d]) =
-    maybe (bcsToWord8s $ toByteCode STOP) (view acctCode) <$> addy (toAddress a) >>=
+    maybe (bcsToU8s $ toByteCode STOP) (view acctCode) <$> addy (toAddress a) >>=
     codeCopy b (int c) (int d) >> next
 dispatch BLOCKHASH (_,[a]) = view number >>= blockHash a >>= push >> next
 dispatch COINBASE _ = view coinbase >>= push >> next
@@ -103,7 +103,7 @@ callDataLoad i = do
   cd <- view callData
   let check [] = 0
       check (a:_) = a
-  return . check . w8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [i .. i+31]
+  return . check . u8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [i .. i+31]
 
 
 next :: VM e (ControlFlow e)
@@ -128,7 +128,7 @@ jump j = do
     Nothing -> err $ "jump: invalid address " ++ show j
     Just c -> return (Jump c)
 
-codeCopy :: U256 -> Int -> Int -> [Word8] -> VM e ()
+codeCopy :: U256 -> Int -> Int -> [U8] -> VM e ()
 codeCopy memloc codeoff len codes = mstores memloc 0 (fromIntegral $ length us) us
     where us = take len . drop codeoff $ codes
 
@@ -167,24 +167,24 @@ addy k = xRun $ xAddress <@$> k
 mload :: U256 -> VM e U256
 mload i = do
   m <- use mem
-  return $ head . w8sToU256s . map (fromMaybe 0 . (`M.lookup` m)) $ [i .. i+31]
+  return $ head . u8sToU256s . map (fromMaybe 0 . (`M.lookup` m)) $ [i .. i+31]
 
 
 mstore :: U256 -> U256 -> VM e ()
-mstore i v = mem %= M.union (M.fromList $ reverse $ zip (reverse [i .. i + 31]) (reverse (u256ToW8s v)))
+mstore i v = mem %= M.union (M.fromList $ reverse $ zip (reverse [i .. i + 31]) (reverse (u256ToU8s v) ++ repeat 0))
 
-mstore8 :: U256 -> Word8 -> VM e ()
+mstore8 :: U256 -> U8 -> VM e ()
 mstore8 i b = mem %= M.insert i b
 
 
-mloads :: U256 -> U256 -> VM e [Word8]
+mloads :: U256 -> U256 -> VM e [U8]
 mloads loc len | len < 1 = return []
                | otherwise = do
   m <- use mem
   return $ map (fromMaybe 0 . (`M.lookup` m)) $ [loc .. loc + len - 1]
 
 
-mstores :: U256 -> U256 -> U256 -> [Word8] -> VM e ()
+mstores :: U256 -> U256 -> U256 -> [U8] -> VM e ()
 mstores memloc off len v
     | len < 1 = return ()
     | otherwise = mem %= M.union (M.fromList $ zip [memloc .. memloc + len - 1] (drop (fromIntegral off) v))
@@ -306,8 +306,9 @@ refund g = do
   xRun $ xRefund <@$> a <@*> g
 
 
-sha3 :: [Word8] -> U256
-sha3 = head . w8sToU256s . BA.unpack . (hash :: BA.Bytes -> Digest Kekkak_256) . BA.pack
+sha3 :: [U8] -> U256
+sha3 = head . u8sToU256s . map fromIntegral . BA.unpack .
+       (hash :: BA.Bytes -> Digest Kekkak_256) . BA.pack . map fromIntegral
 
 blockHash :: U256 -> U256 -> VM e U256
-blockHash n blocknum = return $ sha3 $ u256ToW8s (n + blocknum)
+blockHash n blocknum = return $ sha3 $ u256ToU8s (n + blocknum)

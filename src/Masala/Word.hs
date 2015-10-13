@@ -9,11 +9,11 @@ module Masala.Word
     (
      U256 (..)
     ,S256 (..)
-    ,module Data.Word
+    ,U8 (..)
     ,module Data.Bits
     ,showHex,showHexs,showBinary
     ,readHex,readHexs,hexSize
-    ,u256ToW8s,w8sToU256s
+    ,u256ToU8s,u8sToU256s
     ,parseJSONHex
      ) where
 
@@ -38,6 +38,11 @@ instance FromJSON U256 where
 
 -- | Signed equivalent of 'U256'. Internal to VM only (no JSON support).
 newtype S256 = S256 Int256 deriving (Num,Eq,Show,Ord,Bounded,Enum,Integral,Real,Generic,Bits)
+
+-- | Newtype over Word8 to get hex output, mainly
+newtype U8 = U8 Word8 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic,Bits,Read,FiniteBits)
+instance Show U8 where show (U8 u) = N.showHex u ""
+
 
 
 
@@ -81,15 +86,15 @@ readHexs s = if rm == 0
           rm = length s `mod` sz
 
 
-w8sToU256s :: [Word8] -> [U256]
-w8sToU256s = fst. foldr acc ([0],0)
+u8sToU256s :: [U8] -> [U256]
+u8sToU256s = fst. foldr acc ([0],0)
     where acc v (t:ts,p) | p < 256 = (t + shift (fromIntegral v) p:ts, p + 8)
                          | otherwise = acc v (0:t:ts,0)
           acc _ ([],_) = error "c'est impossible"
 
 
-u256ToW8s :: U256 -> [Word8]
-u256ToW8s 0 = [0]
-u256ToW8s u = w8 [] u
+u256ToU8s :: U256 -> [U8]
+u256ToU8s 0 = [0]
+u256ToU8s u = w8 [] u
     where w8 ws v | v > 0 = w8 (fromIntegral (v .&. 0xff):ws) (v `shiftR` 8)
                   | otherwise = ws

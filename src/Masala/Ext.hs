@@ -24,7 +24,7 @@ instance Show Address where show (Address u) = showHex u
 instance FromJSON Address where parseJSON = parseJSONHex "Address"
 
 data ExtAccount = ExtAccount {
-      _acctCode :: [Word8]
+      _acctCode :: [U8]
     , _acctBalance :: Gas
     , _acctAddress :: Address
     , _acctStore :: M.Map U256 U256
@@ -103,7 +103,7 @@ data LogEntry = LogEntry {
       logAddress :: Address
     , logBlock :: U256
     , logTopics :: [U256]
-    , logData :: [Word8]
+    , logData :: [U8]
 } deriving (Eq,Show)
 
 data Ext e = Ext {
@@ -111,7 +111,7 @@ data Ext e = Ext {
     , xLoad :: Address -> U256 -> ExtOp e (Maybe U256)
     , xAddress :: Address -> ExtOp e (Maybe ExtAccount)
     , xCreate :: Gas -> ExtOp e ExtAccount
-    , xSaveCode :: Address -> [Word8] -> ExtOp e ()
+    , xSaveCode :: Address -> [U8] -> ExtOp e ()
     , xSuicide :: Address -> ExtOp e Bool
     , xRefund :: Address -> Gas -> ExtOp e ()
     , xIsCreate :: Address -> ExtOp e Bool

@@ -15,14 +15,14 @@ module Masala.Instruction
     ,Instruction (..)
     ,parse, parseHex
     ,bcToHex
-    ,bcToWord8s,bcsToWord8s
+    ,bcToU8s,bcsToU8s
     ,spec
 ) where
 
-import Data.Word
 import Prelude hiding (LT,GT,EQ)
 import qualified Data.Map as M
 import Masala.Word
+import qualified Numeric as N
 
 
 -- | ByteCode representation for VM, optimized for PUSHx operations.
@@ -32,10 +32,10 @@ data ByteCode = ByteCode {
       -- | Instruction/opcode
     , bcInst :: Instruction
       -- | Push values, if any
-    , bcValue :: [Word8]
+    , bcValue :: [U8]
     } deriving (Eq)
 instance Show ByteCode where
-    show (ByteCode n i w) = show n ++ ":" ++ show i ++ if null w then "" else show w
+    show (ByteCode n i w) = N.showHex n "" ++ ":" ++ show i ++ if null w then "" else show w
 
 -- | Convenience class for repl, mainly.
 class ToByteCode a where
@@ -64,7 +64,7 @@ data ParamSpec =
 -- | Instruction/opcode specification, per yellow paper
 data Spec = Spec {
       -- | Opcode
-      value :: Word8,
+      value :: U8,
       -- | How many words to pop off stack
       stackIn :: Int,
       -- | How many words will be pushed onto stack
@@ -207,13 +207,13 @@ data Instruction =
     | SUICIDE
   deriving (Eq,Show,Enum,Ord,Bounded)
 
--- | map Word8s to Instructions.
-valueToInst :: M.Map Word8 Instruction
+-- | map U8s to Instructions.
+valueToInst :: M.Map U8 Instruction
 valueToInst = M.fromList $ map assn [minBound .. maxBound]
     where assn i = (value (spec i),i)
 
--- | parse Word8s to bytecode rep.
-parse :: [Word8] -> Either String [ByteCode]
+-- | parse U8s to bytecode rep.
+parse :: [U8] -> Either String [ByteCode]
 parse prog = toBC [] . zip [0..] $ prog
     where toBC bcs [] = Right $ reverse bcs
           toBC bcs ((idx,v):ws) =
@@ -237,7 +237,7 @@ parseHex = either Left parse . readHexs
 
 -- | back to hex string
 bcToHex :: [ByteCode] -> String
-bcToHex = showHexs . concatMap bcToWord8s
+bcToHex = showHexs . concatMap bcToU8s
 
 infixl 8 +>
 
@@ -253,18 +253,18 @@ a +> b = ba ++ setIdxs(toByteCode b)
 -- | convenience for entering push values. Can also use "(default U256)".
 wPUSH :: U256 -> ByteCode
 wPUSH v = ByteCode 0 selectPush ws
-    where ws = u256ToW8s v
+    where ws = u256ToU8s v
           selectPush = [pred PUSH1 ..] !! length ws
 
 
 -- | Bytecode is optimized for PUSH, meaning it's not one-to-one with opcode sequences.
-bcToWord8s :: ByteCode -> [Word8]
-bcToWord8s (ByteCode _ i []) = return $ value $ spec i
-bcToWord8s (ByteCode _ i ws) = value (spec i):ws
+bcToU8s :: ByteCode -> [U8]
+bcToU8s (ByteCode _ i []) = return $ value $ spec i
+bcToU8s (ByteCode _ i ws) = value (spec i):ws
 
 -- | Convert back to words.
-bcsToWord8s :: [ByteCode] -> [Word8]
-bcsToWord8s = concatMap bcToWord8s
+bcsToU8s :: [ByteCode] -> [U8]
+bcsToU8s = concatMap bcToU8s
 
 -- | Opcode specification, generated from yellow paper.
 spec :: Instruction -> Spec

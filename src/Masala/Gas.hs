@@ -106,7 +106,7 @@ memSize :: U256 -> U256 -> Maybe GasCalc
 memSize a b = Just $ MemSize (a + b)
 
 wordSize :: U256 -> Int
-wordSize = length . u256ToW8s
+wordSize = length . u256ToU8s
 
 callGas :: Instruction -> [U256] -> (Gas,Maybe GasCalc)
 callGas i [g,t,gl,io,il,oo,ol] = (fromIntegral g + (if gl > 0 then gas_callvalue else 0),
