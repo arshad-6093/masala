@@ -17,6 +17,10 @@ testMemory = do
   it "mstore->mload" $ (runD $ mstore 0 20 >> mload 0) `shouldOutput` 20
   it "mstore8->mload" $ (runD $ mstore8 31 20 >> mload 0) `shouldOutput` 20
 
+testMSize :: Spec
+testMSize = do
+  it "rounds up 32" $ (runD $ mstore 0x5a 0xeeee >> msize) `shouldOutput` 0x80
+
 shouldOutput :: (Eq a,Show a) => IO (Result a) -> a -> Expectation
 shouldOutput action expected = do
   a <- action

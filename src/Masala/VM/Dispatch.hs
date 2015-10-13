@@ -78,8 +78,8 @@ dispatch SLOAD (_,[a]) = sload a >>= push >> next
 dispatch SSTORE (_,[a,b]) = sstore a b >> next
 dispatch JUMP (_,[a]) = jump a
 dispatch JUMPI (_,[a,b]) = if b /= 0 then jump a else next
-dispatch PC _ = fromIntegral <$> use ctr >>= push >> next
-dispatch MSIZE _ = fromIntegral . (* 8) . M.size <$> use mem >>= push >> next
+dispatch PC _ = fromIntegral . bcIdx <$> current >>= push >> next
+dispatch MSIZE _ = msize >>= push >> next
 dispatch GAS _ = fromIntegral <$> use gas >>= push >> next
 dispatch JUMPDEST _ = next -- per spec: "Mark a valid destination for jumps."
                            -- "This operation has no effect on machine state during execution."
@@ -105,6 +105,10 @@ callDataLoad i = do
       check (a:_) = a
   return . check . u8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [i .. i+31]
 
+msize :: VM e U256
+msize = (* 32) . ceiling .  (/ (32 :: Float)) . fromIntegral . maximum' . M.keys <$> use mem
+    where maximum' [] = 0
+          maximum' vs = maximum vs
 
 next :: VM e (ControlFlow e)
 next = return Next
@@ -237,13 +241,13 @@ swap n = do
   stack %= set (ix 0) sn . set (ix n) s0
 
 log :: Int -> [U256] -> VM e ()
-log n (mstart:msize:topics)
+log n (mstart:sz:topics)
     | length topics /= n =
         err $ "Dispatch error, LOG" ++ show n ++ " with " ++ show (length topics) ++ " topics"
     | otherwise = do
         a <- view address
         b <- view number
-        d <- mloads mstart msize
+        d <- mloads mstart sz
         xRun $ xLog <@$> LogEntry a b topics d
 log n ws = err $ "Dispatch error LOG" ++ show n ++ ", expected 3 args: " ++ show ws
 
