@@ -22,7 +22,6 @@ module Masala.Instruction
 import Prelude hiding (LT,GT,EQ)
 import qualified Data.Map as M
 import Masala.Word
-import qualified Numeric as N
 
 
 -- | ByteCode representation for VM, optimized for PUSHx operations.
@@ -35,7 +34,7 @@ data ByteCode = ByteCode {
     , bcValue :: [U8]
     } deriving (Eq)
 instance Show ByteCode where
-    show (ByteCode n i w) = N.showHex n "" ++ ":" ++ show i ++ if null w then "" else show w
+    show (ByteCode n i w) = showHex n ++ ":" ++ show i ++ if null w then "" else show w
 
 -- | Convenience class for repl, mainly.
 class ToByteCode a where

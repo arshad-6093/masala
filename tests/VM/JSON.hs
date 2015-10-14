@@ -112,7 +112,7 @@ validateRun n t o = either (Failure n t o) (const (Success n)) check
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
               case fst o of
-                Final os -> assertEqual "output matches" (getWords ws) (dropWhile (==0) os)
+                Final os -> assertEqual "output matches" (getWords ws) os
                 r -> Left $ "FAILED: non-final result expected " ++ show ws ++ ", result: " ++ show r
 
 assertPostAcctsMatch :: M.Map Address ExtAccount -> M.Map Address ExtAccount -> Either String ()

@@ -131,7 +131,7 @@ computeMemGas newSzBytes = do
   let toWordSize v = (v + 31) `div` 32
       newSzWords = fromIntegral $ toWordSize newSzBytes
       fee s = ((s * s) `div` 512) + (s * gas_memory)
-  oldSzWords <- M.size <$> use mem
+  oldSzWords <- fromIntegral <$> msize
   return $ if newSzWords > oldSzWords
            then fee newSzWords - fee oldSzWords
            else 0

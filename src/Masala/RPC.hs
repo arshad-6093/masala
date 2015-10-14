@@ -38,9 +38,9 @@ newtype WordArray = WordArray { getWords :: [U8] }
 instance FromJSON WordArray where
     parseJSON = withText "WordArray"
                 (\t -> case readHexs (drop 2 $ T.unpack t) of
-                         Right a -> return (WordArray (dropWhile (==0) a))
+                         Right a -> return (WordArray a)
                          Left err -> fail err)
-instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHex a
+instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHexPad a
 
 
 parseDropPfxJSON :: (Generic a, GFromJSON (Rep a), FromJSON a) => Int -> Value -> Parser a

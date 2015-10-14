@@ -11,7 +11,7 @@ module Masala.Word
     ,S256 (..)
     ,U8 (..)
     ,module Data.Bits
-    ,showHex,showHexs,showBinary
+    ,showHex,showHexPad,showHexs,showBinary
     ,readHex,readHexs,hexSize
     ,u256ToU8s,u8sToU256s
     ,parseJSONHex
@@ -31,7 +31,7 @@ import Data.List.Split
 
 -- | Main type, unsigned 256-bit word.
 newtype U256 = U256 Word256 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic,Bits,Read,FiniteBits)
-instance Show U256 where show (U256 u) = N.showHex u ""
+instance Show U256 where show (U256 u) = showHex u
 instance FromJSON U256 where
     parseJSON = parseJSONHex "U256"
 
@@ -41,14 +41,15 @@ newtype S256 = S256 Int256 deriving (Num,Eq,Show,Ord,Bounded,Enum,Integral,Real,
 
 -- | Newtype over Word8 to get hex output, mainly
 newtype U8 = U8 Word8 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic,Bits,Read,FiniteBits)
-instance Show U8 where show (U8 u) = N.showHex u ""
+instance Show U8 where show (U8 u) = showHex u
 
 
-
+showHex :: (Integral a, Show a) => a -> String
+showHex a = N.showHex a ""
 
 -- | showHex with padded 0s to hex size of type.
-showHex :: (FiniteBits a, Integral a, Show a, Eq a, Num a) => a -> String
-showHex v = pad $ N.showHex v "" where
+showHexPad :: (FiniteBits a, Integral a, Show a, Eq a, Num a) => a -> String
+showHexPad v = pad $ showHex v where
     pad s = take (max 0 (hexSize v - length s)) (repeat '0') ++ s
 
 hexSize :: FiniteBits b => b -> Int
@@ -56,7 +57,7 @@ hexSize v = finiteBitSize v `div` 4
 
 -- | concat hex reps
 showHexs :: (FiniteBits a, Integral a, Show a, Eq a, Num a) => [a] -> String
-showHexs = concatMap showHex
+showHexs = concatMap showHexPad
 
 
 -- | Binary rep.
