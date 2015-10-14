@@ -16,7 +16,7 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import GHC.Generics
 
-type Gas = Int
+type Gas = Integer
 
 newtype Address = Address U256 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic)
 instance Show Address where show (Address u) = showHex u

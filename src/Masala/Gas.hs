@@ -105,8 +105,8 @@ computeGas i p = (\(g,c) -> (g + fgas,c)) $ iGas i p
 memSize :: U256 -> U256 -> Maybe GasCalc
 memSize a b = Just $ MemSize (a + b)
 
-wordSize :: U256 -> Int
-wordSize = length . u256ToU8s
+wordSize :: U256 -> Integer
+wordSize = fromIntegral . length . u256ToU8s
 
 callGas :: Instruction -> [U256] -> (Gas,Maybe GasCalc)
 callGas i [g,t,gl,io,il,oo,ol] = (fromIntegral g + (if gl > 0 then gas_callvalue else 0),
@@ -115,7 +115,7 @@ callGas i [g,t,gl,io,il,oo,ol] = (fromIntegral g + (if gl > 0 then gas_callvalue
 callGas _ _ = (0,Nothing) -- error will be caught in dispatch
 
 iGas :: Instruction -> (Maybe ParamSpec,[U256]) -> (Gas,Maybe GasCalc)
-iGas _ (Just (Log n),[a,b]) = (gas_log + (n * gas_logtopic) + (fromIntegral b * gas_logdata),
+iGas _ (Just (Log n),[a,b]) = (gas_log + (fromIntegral n * gas_logtopic) + (fromIntegral b * gas_logdata),
                        memSize a b)
 iGas EXP (_,[_a,b]) = (gas_exp + (wordSize b * gas_expbyte), Nothing)
 iGas SSTORE (_,[a,b]) = (0,Just $ StoreOp a b)

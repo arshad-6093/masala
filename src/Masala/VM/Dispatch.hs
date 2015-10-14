@@ -1,5 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Masala.VM.Dispatch where
 
@@ -51,19 +52,19 @@ dispatch BALANCE (_,[a]) = maybe 0 (fromIntegral . view acctBalance) <$> addy (t
 dispatch ORIGIN _ = view origin >>= push . fromIntegral >> next
 dispatch CALLER _ = view caller >>= push . fromIntegral >> next
 dispatch CALLVALUE _ = view callValue >>= push >> next
-dispatch CALLDATALOAD (_,[a]) = callDataLoad (int a) >>= push >> next
+dispatch CALLDATALOAD (_,[a]) = callDataLoad a >>= push >> next
 dispatch CALLDATASIZE _ = fromIntegral . V.length <$> view callData >>= push >> next
 dispatch CALLDATACOPY (_,[a,b,c]) = V.toList <$> view callData >>=
                                     mstores a b c >> next
-dispatch CODESIZE _ = fromIntegral . V.length . pCode <$> view prog >>= push >> next
+dispatch CODESIZE _ = fromIntegral . length . bcsToU8s . V.toList . pCode <$> view prog >>= push >> next
 dispatch CODECOPY (_,[a,b,c]) = bcsToU8s . V.toList . pCode <$> view prog >>=
-                                codeCopy a (int b) (int c) >> next
+                                codeCopy a b c >> next
 dispatch GASPRICE _ = view gasPrice >>= push >> next
 dispatch EXTCODESIZE (_,[a]) =
     maybe 0 (fromIntegral . length . view acctCode) <$> addy (toAddress a) >>= push >> next
 dispatch EXTCODECOPY (_,[a,b,c,d]) =
     maybe (bcsToU8s $ toByteCode STOP) (view acctCode) <$> addy (toAddress a) >>=
-    codeCopy b (int c) (int d) >> next
+    codeCopy b c d >> next
 dispatch BLOCKHASH (_,[a]) = view number >>= blockHash a >>= push >> next
 dispatch COINBASE _ = view coinbase >>= push >> next
 dispatch TIMESTAMP _ = view timestamp >>= push >> next
@@ -97,16 +98,18 @@ dispatch RETURN (_,[a,b]) = Return <$> mloads a b
 dispatch SUICIDE (_,[a]) = suicide (toAddress a)
 dispatch i ps = err $ "Unsupported operation/arity/spec: " ++ show i ++ ", " ++ show ps
 
-
-callDataLoad :: Int -> VM e U256
+callDataLoad :: U256 -> VM e U256
 callDataLoad i = do
   cd <- view callData
-  let check [] = 0
-      check (a:_) = a
-  return . check . u8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [i .. i+31]
+  if i > fromIntegral (V.length cd)
+  then return 0
+  else do
+    let check [] = 0
+        check (a:_) = a
+    return . check . u8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [fromIntegral i .. fromIntegral i+31]
 
 msize :: VM e U256
-msize = (* 32) . ceiling .  (/ (32 :: Float)) . fromIntegral . maximum' . M.keys <$> use mem
+msize = (* 32) . ceiling .  (/ (32 :: Float)) . fromIntegral . succ . maximum' . M.keys <$> use mem
     where maximum' [] = 0
           maximum' vs = maximum vs
 
@@ -132,9 +135,11 @@ jump j = do
     Nothing -> err $ "jump: invalid address " ++ show j
     Just c -> return (Jump c)
 
-codeCopy :: U256 -> Int -> Int -> [U8] -> VM e ()
-codeCopy memloc codeoff len codes = mstores memloc 0 (fromIntegral $ length us) us
-    where us = take len . drop codeoff $ codes
+codeCopy :: U256 -> U256 -> U256 -> [U8] -> VM e ()
+codeCopy memloc codeoff len codes
+    | codeoff +^ len > fromIntegral (length codes) = return ()
+    | otherwise = mstores memloc 0 (fromIntegral $ length us) us
+    where us = take (fromIntegral len) . drop (fromIntegral codeoff) $ codes
 
 lookupAcct :: String -> Address -> VM e ExtAccount
 lookupAcct msg addr = do
@@ -191,9 +196,19 @@ mloads loc len | len < 1 = return []
 mstores :: U256 -> U256 -> U256 -> [U8] -> VM e ()
 mstores memloc off len v
     | len < 1 = return ()
+    | off +^ len > fromIntegral (length v) = return ()
     | otherwise = mem %= M.union (M.fromList $ zip [memloc .. memloc + len - 1] (drop (fromIntegral off) v))
 
 
+
+infixl 6 +^
+
+(+^) :: (Integral a, Bounded a) => a -> a -> a
+(+^) = overflowOp (+)
+
+overflowOp :: forall a . (Integral a, Bounded a) => (Integer -> Integer -> Integer) -> a -> a -> a
+overflowOp f a b = if r > fromIntegral (maxBound :: a) then maxBound else fromIntegral r
+    where r = f (fromIntegral a) (fromIntegral b)
 
 sload :: U256 -> VM e U256
 sload i = do
