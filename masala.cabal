@@ -30,22 +30,23 @@ library
   -- other-extensions:
   ghc-options: -Wall
   build-depends:
-                base >=4.7 && <4.9
-              , aeson
-              , bytestring
-              , containers >= 0.5
-              , cryptonite
-              , data-dword
-              , lens
-              , lens-aeson
-              , memory
-              , mtl
-              , transformers
-              , unordered-containers
-              , text
-              , split
-              , vector
-              , hspec
+                    base >=4.7 && <4.9
+                , aeson
+                , bytestring
+                , containers >= 0.5
+                , cryptonite
+                , data-dword
+                , directory
+                , hspec
+                , lens
+                , lens-aeson
+                , memory
+                , mtl
+                , split
+                , text
+                , transformers
+                , unordered-containers
+                , vector
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -56,6 +57,13 @@ test-suite tests
   hs-source-dirs: tests
   default-language:    Haskell2010
   build-depends:
-                base,
-                masala, containers, aeson, lens, bytestring, text, vector,
-                hspec
+                  aeson
+                , base
+                , bytestring
+                , containers
+                , directory
+                , hspec
+                , lens
+                , masala
+                , text
+                , vector

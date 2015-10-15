@@ -23,6 +23,8 @@ import qualified Data.Set as S
 import Control.Exception
 import Control.Monad
 import Test.Hspec
+import System.Directory
+import Control.Lens
 
 
 
@@ -41,37 +43,21 @@ instance Show TestResult where
 
 spec :: Spec
 spec = do
-  fileSpec "vmIOandFlowOperationsTest.json"
-               [
-                ("gas0","not supporting exact gascalc matches")
-               ]
-  fileSpec "vmArithmeticTest.json"
-               [
-                ("signextend_Overflow_dj42","incomprehensible test, and signextend-overflow is a weird case")
-               ]
-  fileSpec "vmEnvironmentalInfoTest.json"
-               [
-                ("ExtCodeSizeAddressInputTooBigRightMyAddress", "weird account-create")
-               ,("balance0", "weird account-create")
-               ,("balanceAddressInputTooBig", "weird account-create")
-               ,("balanceAddressInputTooBigRightMyAddress", "weird account-create")
-               ,("balanceCaller3", "weird account-create")
-               ,("calldatacopy_DataIndexTooHigh_return", "fine but output zero count doesn't match")
-               ,("extcodecopy0AddressTooBigRight", "weird account-create")
-               ]
-  fileSpec "vmBitwiseLogicOperationTest.json" []
+  tfs <- runIO (filter ((".json" ==).reverse.take 5.reverse) <$> getDirectoryContents "testfiles")
+  mapM_ (parallel.fileSpec) tfs
 
-fileSpec :: FilePath -> [(String,String)] -> Spec
-fileSpec tf skips =
+
+fileSpec :: FilePath -> Spec
+fileSpec tf =
     describe tf $ do
       vts <- runIO $ readVMTests tf
-      foldl1 (>>) $ flip map (M.toList vts) $ \(n,vt) ->
+      forM_ (M.toList vts) $ \(n,vt) ->
                   do
                     tr <- runIO $ runTest False n vt
                     let success = return () :: Expectation
                     case tr of
                       (Success {}) -> it n success
-                      r -> case n `lookup` skips of
+                      r -> case vskip vt of
                              Just reason -> it (n ++ " [UNSUPPORTED, " ++ reason ++ "]: " ++ show r) success
                              Nothing -> it n $ expectationFailure (show r)
 
@@ -115,10 +101,13 @@ runTest dbg t tc = do
               then return $ Success (t ++ " [with failure: " ++ e ++ "]")
               else return $ Err t $ "Runtime failure: " ++ e
     Right o -> do
-           let tr = validateRun t tc o
+           let tr = validateRun t tc $ over (_2.vmext) actionSuicides $ o
            when dbg $ print tr
            return tr
 
+actionSuicides :: ExtData -> ExtData
+actionSuicides ed = over edAccts (M.filterWithKey isSuicide) ed
+    where isSuicide a _ = not $ a `S.member` (view edSuicides ed)
 
 validateRun :: String -> VMTest -> Output ExtData -> TestResult
 validateRun n t o = either (Failure n t o) (const (Success n)) check
@@ -196,6 +185,7 @@ type TestAccts = M.Map Address TestAcct
 
 data VMTest = VMTest {
       vexec :: TestExec
+    , vskip :: Maybe String
     , vgas :: Maybe U256
     , vlogs :: Maybe [TestLog]
     , vout :: Maybe WordArray
