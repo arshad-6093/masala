@@ -40,64 +40,9 @@ instance Show ExtAccount where
                   sc _ = "*bytecode*"
 
 
-newtype ExtOp e a = ExtOp { runExtOp :: e -> (a, e) } deriving (Functor)
-instance Applicative (ExtOp e) where
-    pure a = ExtOp (a,)
-    (ExtOp f) <*> (ExtOp a) = ExtOp $ \e -> ((fst $ f e) (fst $ a e),e)
-instance Monad (ExtOp e) where
-    return = pure
-    a >>= f = ExtOp $ \e -> (\(a',e') -> runExtOp (f a') e')  $ runExtOp a e
-
-
-class HasExtState e a | a -> e where
-    ext :: Lens' a e
-
-class HasExtApi e a | a -> e where
-    extApi :: Lens' a (Ext e)
-
-
-
 toAddress :: Integral i => i -> Address
 toAddress u = fromIntegral (u `mod` (2 ^ (160 :: Int)))
 
-
-execExtOp :: ExtOp e a -> e -> e
-execExtOp op = snd . runExtOp op
-
-evalExtOp :: ExtOp e a -> e -> a
-evalExtOp op = fst . runExtOp op
-
-setExt :: (e -> e) -> ExtOp e ()
-setExt f = ExtOp $ ((),) . f
-
-useExt :: (e -> a) -> ExtOp e a
-useExt f = fmap f getExt
-
-getExt :: ExtOp e e
-getExt = ExtOp $ \e -> (e,e)
-
-xover :: ASetter s s a b -> (a -> b) -> ExtOp s ()
-xover l f = setExt $ over l f
-
-xfirstOf :: Getting (Leftmost a) s a -> ExtOp s (Maybe a)
-xfirstOf l = useExt $ firstOf l
-
-xview :: Getting b s b -> ExtOp s b
-xview l = view l <$> getExt
-
-infixl 4 <@$>
-(<@$>) :: (HasExtApi e r, MonadReader r m) => (Ext e -> x -> b) -> x -> m b
-acc <@$> a = do f <- acc <$> view extApi; return $ f a
-
-infixl 4 <@*>
-(<@*>) :: Monad m => m (y -> c) -> y -> m c
-f <@*> b = f >>= \f' -> return $ f' b
-
-xRun :: (HasExtState e s, MonadState s m) => m (ExtOp e r) -> m r
-xRun v = do
-  (r,e) <- runExtOp <$> v <*> use ext
-  ext .= e
-  return r
 
 data LogEntry = LogEntry {
       logAddress :: Address
@@ -106,14 +51,18 @@ data LogEntry = LogEntry {
     , logData :: [U8]
 } deriving (Eq,Show)
 
-data Ext e = Ext {
-      xStore :: Address -> U256 -> U256 -> ExtOp e ()
-    , xLoad :: Address -> U256 -> ExtOp e (Maybe U256)
-    , xAddress :: Address -> ExtOp e (Maybe ExtAccount)
-    , xCreate :: Gas -> ExtOp e ExtAccount
-    , xSaveCode :: Address -> [U8] -> ExtOp e ()
-    , xSuicide :: Address -> ExtOp e Bool
-    , xRefund :: Address -> Gas -> ExtOp e ()
-    , xIsCreate :: Address -> ExtOp e Bool
-    , xLog :: LogEntry -> ExtOp e ()
-}
+
+
+
+class (Monad m) => MonadExt m where
+      extStore :: Address -> U256 -> U256 -> m ()
+      extLoad :: Address -> U256 -> m (Maybe U256)
+      extOut :: String -> m ()
+      extDebug :: String -> m ()
+      extAddress :: Address -> m (Maybe ExtAccount)
+      extCreate :: Gas -> m ExtAccount
+      extSaveCode :: Address -> [U8] -> m ()
+      extSuicide :: Address -> m Bool
+      extRefund :: Address -> Gas -> m ()
+      extIsCreate :: Address -> m Bool
+      extLog :: LogEntry -> m ()

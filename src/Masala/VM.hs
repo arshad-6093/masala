@@ -31,7 +31,7 @@ toProg bc = Prog (V.fromList bc) (M.fromList (zipWith idx [0..] bc))
     where idx c (ByteCode n _ _) = (fromIntegral n,c)
 
 
-forward :: VM e Bool
+forward :: Monad m => VM m Bool
 forward = do
   c <- use ctr
   (Prog p _) <- view prog
@@ -41,50 +41,45 @@ forward = do
     ctr .= c + 1
     return True
 
-emptyState :: e -> Gas -> VMState e
+emptyState :: Gas -> VMState
 emptyState = VMState [] 0 M.empty
 
-runVM :: (Show ext) =>
-         VMState ext -> Env ext -> Maybe (Resume ext) -> IO (Either String (Output ext))
-runVM vm env callR = unVM vm env go >>= postEx env
-    where go = (,) <$> stepVM callR <*> get
+launchVM :: MonadExt m => VMState -> Env -> Maybe Resume -> m (Either String VMResult, VMState)
+launchVM vm env callR = runVM vm env (stepVM callR) >>= postEx env
 
 
-postEx :: (Show ext) =>
-          Env ext -> Either String (Output ext) -> IO (Either String (Output ext))
-postEx _ l@(Left _) = return l
-postEx _ r@(Right (Final {},_)) = return r
-postEx env (Right (Call g addr codes _glimit cdata action, vm)) = do
+postEx :: MonadExt m => Env -> (Either String VMResult, VMState) -> m (Either String VMResult, VMState)
+postEx _ l@(Left _,_) = return l
+postEx _ r@(Right (Final {}),_) = return r
+postEx env (Right (Call g addr codes _glimit cdata action), vm) = do
   let parsedcode = parse codes
   case parsedcode of
-    Left e -> return $ Left e
+    Left e -> return (Left e,vm)
     Right prog' -> do
-      let es = view ext vm
-          env' = set prog (toProg prog') .
+      let  env' = set prog (toProg prog') .
                  set address (_acctAddress addr) .
                  set caller (view address env) .
                  set callData (V.fromList cdata) $ env
-      r <- runVM (emptyState es (fromIntegral g)) env' Nothing
+      r <- launchVM (emptyState (fromIntegral g)) env' Nothing
       case r of
-        Left _ -> return r
-        (Right (Call {},_)) -> return $ Left $ "VM error: Call returned from 'runVM': " ++ show r
-        (Right (Final o,vm')) ->
-            runVM vm env (Just $ Resume 1 o action (view ext vm'))
+        (Left _,_) -> return r
+        (Right (Call {}),v) -> return $ (Left $ "VM mrror: Call returned from 'runVM': " ++ show r,v)
+        (Right (Final o),vm') ->
+            launchVM vm env (Just $ Resume 1 o action)
 
 
-stepVM :: (Show e) => Maybe (Resume e) -> VM e VMResult
+stepVM :: (MonadExt m) => Maybe Resume -> VM m VMResult
 stepVM r = do
   let done ws = do
-             doDebug (get >>= \s -> liftIO $ print (ws,s))
+             get >>= \s -> extDebug $ show (ws,s)
              return (Final ws)
   cf <- case r of
           Nothing -> exec
-          (Just rs@(Resume p result action e)) -> do
-              doDebug (liftIO $ putStrLn $ "Resume: " ++ show rs)
-              ext .= e
+          (Just rs@(Resume p result action)) -> do
+              extDebug $ "Resume: " ++ show rs
               case action of
                 SaveMem loc len -> mstores loc 0 len result
-                SaveCode addr -> xRun $ xSaveCode <@$> addr <@*> result
+                SaveCode addr -> extSaveCode addr result
               push p
               return Next
   case cf of
@@ -99,23 +94,23 @@ stepVM r = do
     Stop -> done []
     Return ws -> done ws
     Yield call -> do
-             doDebug (liftIO $ putStrLn $ "Yield: " ++ show call)
+             extDebug $ "Yield: " ++ show call
              return call
 
 
 
-exec :: (Show e) => VM e (ControlFlow e)
+exec :: MonadExt m => VM m ControlFlow
 exec = do
   bc@(ByteCode _ i ws) <- current
   let (Spec _ stackin _ pspec) = spec i
   svals <- pops stackin
-  doDebug $ debugOut bc svals
+  debugOut bc svals
   handleGas i pspec svals
   if null ws
   then dispatch i (pspec,svals)
   else mapM_ push (u8sToU256s ws) >> next
 
-handleGas :: Instruction -> Maybe ParamSpec -> [U256] -> VM e ()
+handleGas :: MonadExt m => Instruction -> Maybe ParamSpec -> [U256] -> VM m ()
 handleGas i ps svs = do
   let (callg,a) = computeGas i (ps,svs)
   calcg <- case a of
@@ -126,7 +121,7 @@ handleGas i ps svs = do
                         (GasCall sz addr) -> (+) <$> computeMemGas sz <*> computeCallGas addr
   deductGas (calcg + callg)
 
-computeMemGas :: U256 -> VM e Gas
+computeMemGas :: Monad m => U256 -> VM m Gas
 computeMemGas newSzBytes = do
   let toWordSize v = (v + 31) `div` 32
       newSzWords = fromIntegral $ toWordSize newSzBytes
@@ -136,7 +131,7 @@ computeMemGas newSzBytes = do
            then fee newSzWords - fee oldSzWords
            else 0
 
-computeStoreGas :: U256 -> U256 -> VM e Gas
+computeStoreGas :: MonadExt m => U256 -> U256 -> VM m Gas
 computeStoreGas l v' = do
   v <- mload l
   if v == 0 && v' /= 0
@@ -146,40 +141,35 @@ computeStoreGas l v' = do
        else return gas_sreset
 
 
-computeCallGas :: Maybe Address -> VM e Gas
+computeCallGas :: MonadExt m => Maybe Address -> VM m Gas
 computeCallGas Nothing = return 0
 computeCallGas (Just a) = do
-  isNew <- xRun $ xIsCreate <@$> a
+  isNew <- extIsCreate a
   return $ if isNew then gas_callnewaccount else 0
 
 
-doDebug :: VM e () -> VM e ()
-doDebug a = do
-  d <- view debug
-  when d a
-
-debugOut :: (Show e) => ByteCode -> [U256] -> VM e ()
+debugOut :: (MonadExt m) => ByteCode -> [U256] -> VM m ()
 debugOut i svals = do
   vm <- get
-  liftIO $ print (i,svals,vm)
+  extDebug $ show (i,svals,vm)
 
 
 ----
 -- TESTING
 ----
 
-run_ :: String -> IO (Either String (Output ExtData))
+run_ :: String -> IO ((Either String VMResult, VMState),ExtData)
 run_ = either error runBC_ . parseHex
 
-runBC_ :: ToByteCode a => [a] -> IO (Either String (Output ExtData))
+runBC_ :: ToByteCode a => [a] -> IO ((Either String VMResult, VMState),ExtData)
 runBC_ c = runVM_ c [0,1,2,3,4]
 
-runHex :: String -> String -> IO (Either String (Output ExtData))
+runHex :: String -> String -> IO ((Either String VMResult, VMState),ExtData)
 runHex c d = runVM_ (either error id (parseHex c)) (either error id (readHexs d))
 
-runVM_ :: ToByteCode a => [a] -> [U8] -> IO (Either String (Output ExtData))
-runVM_ bc calld = runVM (emptyState ex gas')
-            (Env dbug enableGas calldata api
+runVM_ :: ToByteCode a => [a] -> [U8] -> IO ((Either String VMResult, VMState),ExtData)
+runVM_ bc calld = flip runMExt ex $ launchVM (emptyState gas')
+            (Env dbug enableGas calldata
              (toProg tbc)
              (_acctAddress acc)
              addr
@@ -191,6 +181,6 @@ runVM_ bc calld = runVM (emptyState ex gas')
           enableGas = True
           gas' = 10000000
           acc = ExtAccount (bcsToU8s tbc) 0 addr M.empty
-          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
+          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty [] True
           calldata = V.fromList calld
           dbug = True

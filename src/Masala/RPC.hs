@@ -25,12 +25,13 @@ import Control.Monad.State.Strict
 import Data.Maybe
 import Control.Lens
 import qualified Data.Vector as V
+import Masala.Ext.Simple
 
-data RPCState e = RPCState { _rpcEnv :: Env e, _rpcExt :: e }
+data RPCState = RPCState { _rpcEnv :: Env, _rpcExt :: ExtData }
 $(makeLenses ''RPCState)
 
 
-type RPC e = ExceptT String (StateT (RPCState e) IO)
+type RPC = ExceptT String (StateT RPCState IO)
 
 
 newtype WordArray = WordArray { getWords :: [U8] }
@@ -127,12 +128,12 @@ rpcs :: HM.HashMap String RPCall
 rpcs = foldl (\m r -> HM.insert (lc1 (show r)) r m) HM.empty [minBound..maxBound]
     where lc1 (c:cs) = C.toLower c:cs
 
-runRPC :: Show e => String -> [Value] -> RPC e Value
+runRPC :: String -> [Value] -> RPC Value
 runRPC c v = do
   rpc <- maybe (throwError $ "Invalid RPC: " ++ c) return $ HM.lookup c rpcs
   dispatchRPC rpc v
 
-runRPCIO :: Show e => RPCState e -> String -> [Value] -> IO (Value,RPCState e)
+runRPCIO :: RPCState -> String -> [Value] -> IO (Value,RPCState)
 runRPCIO s c v = do
   (r,s') <- runStateT (runExceptT (runRPC c v)) s
   case r of
@@ -140,28 +141,26 @@ runRPCIO s c v = do
     Right o -> return (o,s')
 
 
-dispatchRPC :: Show e => RPCall -> [Value] -> RPC e Value
+dispatchRPC :: RPCall -> [Value] -> RPC Value
 dispatchRPC Eth_sendTransaction [a] = arg a >>= sendTransaction
 dispatchRPC Eth_call [a,b] = arg2 a b >>= uncurry ethCall
 dispatchRPC m a = throwError $ "Unsupported RPC: " ++ show m ++ ", " ++ show a
 
-arg :: (FromJSON a) => Value -> RPC e a
+arg :: (FromJSON a) => Value -> RPC a
 arg v = case fromJSON v of
           Error err -> throwError $ "JSON parse failure: " ++ err
           Success a -> return a
 
-arg2 :: (FromJSON a, FromJSON b) => Value -> Value -> RPC e (a,b)
+arg2 :: (FromJSON a, FromJSON b) => Value -> Value -> RPC (a,b)
 arg2 a b = (,) <$> arg a <*> arg b
 
 
 
-ethCall :: Show e => EthCall -> U256 -> RPC e Value
+ethCall :: EthCall -> U256 -> RPC Value
 ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blockNo TODO
   liftIO $ putStrLn $ "ethCall: " ++ show m -- TODO handle as "debug"
-  env <- use rpcEnv
   extdata <- use rpcExt
-  let xapi = _envExtApi env
-      acctm = flip evalExtOp extdata $ xAddress xapi toA
+  acctm <- liftIO $ flip extEval extdata $ extAddress toA
   case acctm of
     Nothing -> throwError $ "ethCall: Bad address: " ++ show m
     Just acct -> do
@@ -171,29 +170,30 @@ ethCall m@(EthCall fromA toA callgas gasPx callvalue sdata) _blockNo = do -- blo
 
 
 
-sendTransaction :: Show e => SendTran -> RPC e Value
+sendTransaction :: SendTran -> RPC Value
 sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
   liftIO $ putStrLn $ "sendTransaction: " ++ show m -- TODO handle as "debug"
-  env <- use rpcEnv
   extdata <- use rpcExt
-  let xapi = _envExtApi env
-      ((addr,acode),extdata') = flip runExtOp extdata $
+  ((addr,acode),extdata') <- liftIO $ flip runMExt extdata $
         case toA of
           Nothing -> do
-            acct <- xCreate xapi 0
+            acct <- extCreate 0
             let ad = _acctAddress acct
                 c = maybe [] getWords sdata
             return (ad,c)
           Just t -> do
-            acctm <- xAddress xapi t
+            acctm <- extAddress t
             case acctm of
               Nothing -> error "Bad address" -- TODO, ExtOp should support MonadError
               Just acct -> return (_acctAddress acct,_acctCode acct)
   liftIO $ print ((addr,acode),extdata')
   rpcExt .= extdata'
   o <- callVM fromA addr callgas gasPx callvalue acode [] -- TODO, trans may also accept ABI
-  when (isNothing toA) $ rpcExt %= execExtOp (xSaveCode xapi addr o)
-  acct' <- evalExtOp (xAddress xapi addr) <$> use rpcExt
+  when (isNothing toA) $ do
+    e <- use rpcExt
+    e' <- liftIO $ extExec (extSaveCode addr o) e
+    rpcExt .= e'
+  acct' <- liftIO . extEval (extAddress addr) =<< use rpcExt
   liftIO $ putStrLn $ "sendTransaction: Success, addr=" ++ show addr ++ ", output=" ++ show o
   return $ String $ T.pack $ "Success, addr=" ++ show addr ++ ", acct=" ++ show acct'
 
@@ -201,7 +201,7 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
 
 
 
-callVM :: (Show e) => Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [U8] -> [U8] -> RPC e [U8]
+callVM :: Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [U8] -> [U8] -> RPC [U8]
 callVM toA fromA callgas gasPx callvalue ccode cdata' = do
   env <- use rpcEnv
   extdata <- use rpcExt
@@ -216,14 +216,14 @@ callVM toA fromA callgas gasPx callvalue ccode cdata' = do
         _callData = V.fromList cdata',
         _prog = toProg (concatMap toByteCode . parse $ ccode)
         }
-      vmstate = emptyState extdata (fromIntegral cgas')
+      vmstate = emptyState (fromIntegral cgas')
   liftIO $ putStrLn $ "callVM: " ++ show vmstate ++ ", " ++ show cgas'
-  r <- liftIO $ runVM vmstate env' Nothing -- TODO, this should be asynchronous, returning "transaction hash"
+  r <- liftIO $ flip runMExt extdata $ launchVM vmstate env' Nothing -- TODO, this should be asynchronous, returning "transaction hash"
   case r of
-    Left s -> throwError $ "ERROR in callVM: " ++ s
-    Right (vr, vs) -> case vr of
+    ((Left s,_),_) -> throwError $ "ERROR in callVM: " ++ s
+    ((Right vr, _vs),ed) -> case vr of
       Final o -> do
         liftIO $ putStrLn $ "call: Success, output=" ++ showHexs o
         rpcEnv .= env'
-        rpcExt .= _vmext vs
+        rpcExt .= ed
         return o

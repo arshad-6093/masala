@@ -32,7 +32,7 @@ data TestResult =
           Success { tname :: String }
         | Failure { tname :: String,
                     ttest :: VMTest,
-                    tout :: (Output ExtData),
+                    tout :: (VMResult,VMState,ExtData),
                     terr :: String }
         | Err { tname :: String, terr :: String }
 instance Show TestResult where
@@ -93,7 +93,7 @@ runTest dbg t tc = do
     putStrLn "-----------------"
     putStrLn t
     putStrLn "-----------------"
-  let catcher :: SomeException -> IO (Either String (Output ExtData))
+  let catcher :: SomeException -> IO (Either String (VMResult,VMState,ExtData))
       catcher e = return $ Left $ "Runtime exception: " ++ show e
   r <- catch (runVMTest dbg t tc) catcher
   case r of
@@ -101,22 +101,23 @@ runTest dbg t tc = do
               then return $ Success (t ++ " [with failure: " ++ e ++ "]")
               else return $ Err t $ "Runtime failure: " ++ e
     Right o -> do
-           let tr = validateRun t tc $ over (_2.vmext) actionSuicides $ o
+           let tr = validateRun t tc o
            when dbg $ print tr
            return tr
-
+{-
 actionSuicides :: ExtData -> ExtData
 actionSuicides ed = over edAccts (M.filterWithKey isSuicide) ed
     where isSuicide a _ = not $ a `S.member` (view edSuicides ed)
+-}
 
-validateRun :: String -> VMTest -> Output ExtData -> TestResult
-validateRun n t o = either (Failure n t o) (const (Success n)) check
+validateRun :: String -> VMTest -> (VMResult,VMState,ExtData) -> TestResult
+validateRun n t o@(vr,vs,ed) = either (Failure n t o) (const (Success n)) check
     where check = checkPost (vpost t) >> checkOutput (vout t)
           checkPost Nothing = Right ()
-          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct ts) (_edAccts . _vmext . snd $ o)
+          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct ts) (_edAccts ed)
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
-              case fst o of
+              case vr of
                 Final os -> assertEqual "output matches" (getWords ws) os
                 r -> Left $ "FAILED: non-final result expected " ++ show ws ++ ", result: " ++ show r
 
@@ -138,20 +139,20 @@ assertEqual msg a b | a == b = return ()
                  | otherwise = Left $ "FAILED: " ++ msg ++ ", intended=" ++
                                show a ++ ", actual=" ++ show b
 
-runVMTest :: Bool -> String -> VMTest -> IO (Either String (Output ExtData))
+runVMTest :: Bool -> String -> VMTest -> IO (Either String (VMResult, VMState, ExtData))
 runVMTest dbg tname test = do
   when dbg $ do
     putStrLn ("Test: " ++ show test)
     putStrLn ("Prog: " ++ show tbc)
-  if null tbc then return $ Right (Final [],vmstate)
-  else either (Left . (("Test failed: " ++ tname ++ ": ") ++)) Right <$>
-         runVM vmstate env Nothing
-    where vmstate = emptyState exdata gas'
+  if null tbc then return $ Right (Final [],vmstate,exdata)
+  else fixup <$> runMExt (launchVM vmstate env Nothing) exdata
+    where vmstate = emptyState gas'
+          fixup ((Left err,_),_) = Left $ "Test failed: " ++ tname ++ ": " ++ err
+          fixup ((Right r,vs),e) = Right (r,vs,e)
           env = Env {
                _debug = dbg
              , _doGas = True
              , _callData = V.fromList (getWords (edata ex))
-             , _envExtApi = api
              , _prog = toProg tbc
              , _address = eaddress ex
              , _origin = eorigin ex
@@ -170,7 +171,7 @@ runVMTest dbg tname test = do
           tenv = venv test
           tbc = concatMap toByteCode (parse (getWords (ecode ex)))
           gas' = fromIntegral $ egas ex
-          exdata = ExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty []
+          exdata = ExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty [] dbg
 
 
 toEacct :: Address -> TestAcct -> ExtAccount

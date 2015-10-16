@@ -25,9 +25,9 @@ import Control.Monad
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)
 instance FromJSON RPCCmd
 
-initRPCState :: RPCState ExtData
+initRPCState :: RPCState
 initRPCState = RPCState
-               (Env dbug enableGas calldata api (toProg []) (_acctAddress acc)
+               (Env dbug enableGas calldata (toProg []) (_acctAddress acc)
                 addr
                 addr
                 0 0 0 0 0 0 0 0 0)
@@ -40,7 +40,7 @@ initRPCState = RPCState
           dbug = True
 
 
-runEvmRPC :: IORef (RPCState ExtData) -> String -> IO String
+runEvmRPC :: IORef RPCState -> String -> IO String
 runEvmRPC ior cmd = do
   ve :: Either String RPCCmd <- return $ eitherDecode (LBS.pack cmd)
   case ve of
@@ -51,7 +51,7 @@ runEvmRPC ior cmd = do
             writeIORef ior s'
             return (LBS.unpack $ encode v)
 
-catchErr :: RPCState ExtData -> SomeException -> IO (Value,RPCState ExtData)
+catchErr :: RPCState -> SomeException -> IO (Value,RPCState)
 catchErr s e = return (object ["error" .= T.pack ("Exception occured: " ++ show e)],s)
 
 _runRPC :: String -> IO String

@@ -22,7 +22,7 @@ import Crypto.Hash
 infMod :: (Integer -> Integer -> Integer) -> U256 -> U256 -> U256 -> U256
 infMod f a b c = fromIntegral ((fromIntegral a `f` fromIntegral b) `mod` fromIntegral c)
 
-dispatch :: Instruction -> (Maybe ParamSpec,[U256]) -> VM e (ControlFlow e)
+dispatch :: MonadExt m => Instruction -> (Maybe ParamSpec,[U256]) -> VM m ControlFlow
 dispatch STOP _ = return Stop
 dispatch ADD (_,[a,b]) = push (a + b) >> next
 dispatch MUL (_,[a,b]) = push (a * b) >> next
@@ -98,7 +98,7 @@ dispatch RETURN (_,[a,b]) = Return <$> mloads a b
 dispatch SUICIDE (_,[a]) = suicide (toAddress a)
 dispatch i ps = err $ "Unsupported operation/arity/spec: " ++ show i ++ ", " ++ show ps
 
-callDataLoad :: U256 -> VM e U256
+callDataLoad :: Monad m => U256 -> VM m U256
 callDataLoad i = do
   cd <- view callData
   if i > fromIntegral (V.length cd)
@@ -108,46 +108,46 @@ callDataLoad i = do
         check (a:_) = a
     return . check . u8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [fromIntegral i .. fromIntegral i+31]
 
-msize :: VM e U256
+msize :: Monad m => VM m U256
 msize = (* 32) . ceiling .  (/ (32 :: Float)) . fromIntegral . succ . maximum' . M.keys <$> use mem
     where maximum' [] = 0
           maximum' vs = maximum vs
 
-next :: VM e (ControlFlow e)
+next :: Monad m => VM m ControlFlow
 next = return Next
 
-pushb :: Bool -> VM e ()
+pushb :: Monad m => Bool -> VM m ()
 pushb b = push $ if b then 1 else 0
 
 sgn :: U256 -> S256
 sgn = fromIntegral
 
-pushs :: S256 -> VM e ()
+pushs :: Monad m => S256 -> VM m ()
 pushs = push . fromIntegral
 
 int :: Integral a => a -> Int
 int = fromIntegral
 
-jump :: U256 -> VM e (ControlFlow e)
+jump :: Monad m => U256 -> VM m ControlFlow
 jump j = do
   bc <- M.lookup j . pCodeMap <$> view prog
   case bc of
     Nothing -> err $ "jump: invalid address " ++ show j
     Just c -> return (Jump c)
 
-codeCopy :: U256 -> U256 -> U256 -> [U8] -> VM e ()
+codeCopy :: Monad m => U256 -> U256 -> U256 -> [U8] -> VM m ()
 codeCopy memloc codeoff len codes
     | codeoff +^ len > fromIntegral (length codes) = return ()
     | otherwise = mstores memloc 0 (fromIntegral $ length us) us
     where us = take (fromIntegral len) . drop (fromIntegral codeoff) $ codes
 
-lookupAcct :: String -> Address -> VM e ExtAccount
+lookupAcct :: MonadExt m => String -> Address -> VM m ExtAccount
 lookupAcct msg addr = do
-  l <- xRun $ xAddress <@$> addr
+  l <- extAddress addr
   maybe (throwError $ msg ++ ": " ++ show addr) return l
 
-doCall :: Gas -> Address -> Address -> Gas ->
-          U256 -> U256 -> U256 -> U256 -> VM e (ControlFlow e)
+doCall :: MonadExt m => Gas -> Address -> Address -> Gas ->
+          U256 -> U256 -> U256 -> U256 -> VM m ControlFlow
 doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
   d <- mloads inoff inlen
   codes <- view acctCode <$> lookupAcct "doCall: invalid code acct" codeAddr
@@ -155,45 +155,45 @@ doCall cgas addr codeAddr cgaslimit inoff inlen outoff outlen = do
   return $ Yield Call { cGas = cgas, cAcct = acct, cCode = codes, cGasLimit = cgaslimit,
                               cData = d, cAction = SaveMem outoff outlen }
 
-create :: Gas -> U256 -> U256 -> VM e (ControlFlow e)
+create :: MonadExt m => Gas -> U256 -> U256 -> VM m ControlFlow
 create cgas codeloc codeoff = do
   codes <- mloads codeloc codeoff
-  newaddy <- xRun $ xCreate <@$> cgas
+  newaddy <- extCreate cgas
   deductGas cgas
   gl <- view gaslimit
   return  $ Yield Call { cGas = cgas, cAcct = newaddy, cCode = codes, cGasLimit = gl,
                          cData = [], cAction = SaveCode (view acctAddress newaddy) }
 
-suicide :: Address -> VM e (ControlFlow e)
+suicide :: MonadExt m => Address -> VM m ControlFlow
 suicide addr = do
-  isNewSuicide <- xRun $ xSuicide <@$> addr
+  isNewSuicide <- extSuicide addr
   when isNewSuicide $ refund gas_suicide
   return Stop
 
-addy :: Address -> VM e (Maybe ExtAccount)
-addy k = xRun $ xAddress <@$> k
+addy :: MonadExt m => Address -> VM m (Maybe ExtAccount)
+addy k = extAddress k
 
-mload :: U256 -> VM e U256
+mload :: Monad m => U256 -> VM m U256
 mload i = do
   m <- use mem
   return $ head . u8sToU256s . map (fromMaybe 0 . (`M.lookup` m)) $ [i .. i+31]
 
 
-mstore :: U256 -> U256 -> VM e ()
+mstore :: Monad m => U256 -> U256 -> VM m ()
 mstore i v = mem %= M.union (M.fromList $ reverse $ zip (reverse [i .. i + 31]) (reverse (u256ToU8s v) ++ repeat 0))
 
-mstore8 :: U256 -> U8 -> VM e ()
+mstore8 :: Monad m => U256 -> U8 -> VM m ()
 mstore8 i b = mem %= M.insert i b
 
 
-mloads :: U256 -> U256 -> VM e [U8]
+mloads :: Monad m => U256 -> U256 -> VM m [U8]
 mloads loc len | len < 1 = return []
                | otherwise = do
   m <- use mem
   return $ map (fromMaybe 0 . (`M.lookup` m)) $ [loc .. loc + len - 1]
 
 
-mstores :: U256 -> U256 -> U256 -> [U8] -> VM e ()
+mstores :: Monad m => U256 -> U256 -> U256 -> [U8] -> VM m ()
 mstores memloc off len v
     | len < 1 = return ()
     | off +^ len > fromIntegral (length v) = return ()
@@ -210,15 +210,15 @@ overflowOp :: forall a . (Integral a, Bounded a) => (Integer -> Integer -> Integ
 overflowOp f a b = if r > fromIntegral (maxBound :: a) then maxBound else fromIntegral r
     where r = f (fromIntegral a) (fromIntegral b)
 
-sload :: U256 -> VM e U256
+sload :: MonadExt m => U256 -> VM m U256
 sload i = do
   s <- view address
-  fromMaybe 0 <$> xRun (xLoad <@$> s <@*> i)
+  fromMaybe 0 <$> extLoad s i
 
-sstore :: U256 -> U256 -> VM e ()
+sstore :: MonadExt m => U256 -> U256 -> VM m ()
 sstore a b = do
   s <- view address
-  xRun $ xStore <@$> s <@*> a <@*> b
+  extStore s a b
 
 
 -- TODO: C++ code (per tests) routinely masks after (t - 3) bits whereas this
@@ -239,23 +239,23 @@ byte p v
     | otherwise = (v `shiftR` (8 * (31 - p))) .&. 0xff
 
 
-dup :: Int -> VM e ()
+dup :: Monad m => Int -> VM m ()
 dup n = stackAt (n - 1) >>= push
 
-stackAt :: Int -> VM e U256
+stackAt :: Monad m => Int -> VM m U256
 stackAt n = do
   s <- firstOf (ix n) <$> use stack
   case s of
     Nothing -> err $ "stackAt " ++ show n ++ ": stack underflow"
     Just w -> return w
 
-swap :: Int -> VM e ()
+swap :: Monad m => Int -> VM m ()
 swap n = do
   s0 <- stackAt 0
   sn <- stackAt n
   stack %= set (ix 0) sn . set (ix n) s0
 
-log :: Int -> [U256] -> VM e ()
+log :: MonadExt m => Int -> [U256] -> VM m ()
 log n (mstart:sz:topics)
     | length topics /= n =
         err $ "Dispatch error, LOG" ++ show n ++ " with " ++ show (length topics) ++ " topics"
@@ -263,7 +263,7 @@ log n (mstart:sz:topics)
         a <- view address
         b <- view number
         d <- mloads mstart sz
-        xRun $ xLog <@$> LogEntry a b topics d
+        extLog $ LogEntry a b topics d
 log n ws = err $ "Dispatch error LOG" ++ show n ++ ", expected 3 args: " ++ show ws
 
 sdiv :: S256 -> S256 -> S256
@@ -276,7 +276,7 @@ smod :: S256 -> S256 -> S256
 smod a b | b == 0 = 0
          | otherwise = (abs a `mod` abs b) * signum a
 
-deductGas :: Gas -> VM e ()
+deductGas :: MonadExt m => Gas -> VM m ()
 deductGas total = do
   enabled <- view doGas
   when enabled $ do
@@ -289,27 +289,26 @@ deductGas total = do
                  ", required=" ++ show total ++
                  ", balance= " ++ show gas'
     else do
-      d <- view debug
-      when d $ liftIO $ putStrLn $ "gas used: " ++ show total
+      extDebug $ "gas used: " ++ show total
       gas .= gas'
 
-err :: String -> VM e a
+err :: Monad m => String -> VM m a
 err msg = do
   idx <- use ctr
   bc <- current
   throwError $ msg ++ " (index " ++ show idx ++
           ", value " ++ show bc ++ ")"
 
-current :: VM e ByteCode
+current :: Monad m => VM m ByteCode
 current = do
   c <- use ctr
   (Prog p _) <- view prog
   return $ p V.! c
 
-push :: U256 -> VM e ()
+push :: (Monad m) => U256 -> VM m ()
 push i = stack %= (i:)
 
-pops :: Int -> VM e [U256]
+pops :: (Monad m) => Int -> VM m [U256]
 pops n | n == 0 = return []
        | otherwise = do
   s <- use stack
@@ -319,15 +318,15 @@ pops n | n == 0 = return []
     stack .= drop n s
     return (take n s)
 
-refund :: Gas -> VM e ()
+refund :: MonadExt m => Gas -> VM m ()
 refund g = do
   a <- view address
-  xRun $ xRefund <@$> a <@*> g
+  extRefund a g
 
 
 sha3 :: [U8] -> U256
 sha3 = head . u8sToU256s . map fromIntegral . BA.unpack .
        (hash :: BA.Bytes -> Digest Kekkak_256) . BA.pack . map fromIntegral
 
-blockHash :: U256 -> U256 -> VM e U256
+blockHash :: Monad m => U256 -> U256 -> VM m U256
 blockHash n blocknum = return $ sha3 $ u256ToU8s (n + blocknum)
