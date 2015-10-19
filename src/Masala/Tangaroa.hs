@@ -24,17 +24,18 @@ import Control.Monad
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)
 instance FromJSON RPCCmd
 
+type RPCState = (Env,ExtData)
+
 initRPCState :: RPCState
-initRPCState = RPCState
-               (Env dbug enableGas calldata (toProg []) (_acctAddress acc)
+initRPCState = (Env dbug enableGas calldata (toProg []) (_acctAddress acc)
                 addr
                 addr
-                0 0 0 0 0 0 0 0 0)
-               ex
+                0 0 0 0 0 0 0 0 0,
+               ex)
     where addr = 123456
           enableGas = True
           acc = ExtAccount [] 0 addr M.empty
-          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty []
+          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty [] False
           calldata = V.fromList [0,1,2,3,4]
           dbug = True
 
@@ -45,13 +46,13 @@ runEvmRPC ior cmd = do
   case ve of
     Left err -> return $ "runEvmRPC: invalid JSON: " ++ err
     Right (RPCCmd meth pms) -> do
-            s <- readIORef ior
-            (v,s') <- catch (runRPCIO s meth pms) (catchErr s)
-            writeIORef ior s'
+            s@(e,d) <- readIORef ior
+            (v,e',d') <- catch (runRPCIO d e meth pms) (catchErr s)
+            writeIORef ior (e',d')
             return (LBS.unpack $ encode v)
 
-catchErr :: RPCState -> SomeException -> IO (Value,RPCState)
-catchErr s e = return (object ["error" .= T.pack ("Exception occured: " ++ show e)],s)
+catchErr :: RPCState -> SomeException -> IO (Value,Env,ExtData)
+catchErr (env,ext) e = return (object ["error" .= T.pack ("Exception occured: " ++ show e)],env,ext)
 
 _runRPC :: String -> IO String
 _runRPC s = do

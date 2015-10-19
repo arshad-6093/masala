@@ -106,29 +106,8 @@ class (Monad m) => MonadExt m where
     extLog :: LogEntry -> m ()
 
 
-instance (MonadExt m) => MonadExt (VM m) where
-    {-# INLINE extStore #-}
-    {-# INLINE extLoad #-}
-    {-# INLINE extOut #-}
-    {-# INLINE extDebug #-}
-    {-# INLINE extAddress #-}
-    {-# INLINE extCreate #-}
-    {-# INLINE extSaveCode #-}
-    {-# INLINE extSuicide #-}
-    {-# INLINE extRefund #-}
-    {-# INLINE extIsCreate #-}
-    {-# INLINE extLog #-}
-    extStore a b c = lift $ extStore a b c
-    extLoad a b = lift $ extLoad a b
-    extOut a = lift $ extOut a
-    extDebug a = lift $ extDebug a
-    extAddress a = lift $ extAddress a
-    extCreate a = lift $ extCreate a
-    extSaveCode a b = lift $ extSaveCode a b
-    extSuicide a = lift $ extSuicide a
-    extRefund a b = lift $ extRefund a b
-    extIsCreate a = lift $ extIsCreate a
-    extLog a = lift $ extLog a
+
+
 
 instance MonadTrans VM where
     lift g = VM $ ExceptT $ ReaderT $ \_ -> StateT $ \s -> fmap (\v -> (Right v,s)) $ g
@@ -183,3 +162,101 @@ data LogEntry = LogEntry {
 $(makeLenses ''VMState)
 $(makeLenses ''Env)
 $(makeLenses ''ExtAccount)
+
+
+instance (MonadExt m) => MonadExt (VM m) where
+    {-# INLINE extStore #-}
+    {-# INLINE extLoad #-}
+    {-# INLINE extOut #-}
+    {-# INLINE extDebug #-}
+    {-# INLINE extAddress #-}
+    {-# INLINE extCreate #-}
+    {-# INLINE extSaveCode #-}
+    {-# INLINE extSuicide #-}
+    {-# INLINE extRefund #-}
+    {-# INLINE extIsCreate #-}
+    {-# INLINE extLog #-}
+    extStore a b c = lift $ extStore a b c
+    extLoad a b = lift $ extLoad a b
+    extOut a = lift $ extOut a
+    extDebug a = lift $ extDebug a
+    extAddress a = lift $ extAddress a
+    extCreate a = lift $ extCreate a
+    extSaveCode a b = lift $ extSaveCode a b
+    extSuicide a = lift $ extSuicide a
+    extRefund a b = lift $ extRefund a b
+    extIsCreate a = lift $ extIsCreate a
+    extLog a = lift $ extLog a
+
+instance MonadExt m => MonadExt (ExceptT a m) where
+    {-# INLINE extStore #-}
+    {-# INLINE extLoad #-}
+    {-# INLINE extOut #-}
+    {-# INLINE extDebug #-}
+    {-# INLINE extAddress #-}
+    {-# INLINE extCreate #-}
+    {-# INLINE extSaveCode #-}
+    {-# INLINE extSuicide #-}
+    {-# INLINE extRefund #-}
+    {-# INLINE extIsCreate #-}
+    {-# INLINE extLog #-}
+    extStore a b c = lift $ extStore a b c
+    extLoad a b = lift $ extLoad a b
+    extOut a = lift $ extOut a
+    extDebug a = lift $ extDebug a
+    extAddress a = lift $ extAddress a
+    extCreate a = lift $ extCreate a
+    extSaveCode a b = lift $ extSaveCode a b
+    extSuicide a = lift $ extSuicide a
+    extRefund a b = lift $ extRefund a b
+    extIsCreate a = lift $ extIsCreate a
+    extLog a = lift $ extLog a
+
+instance MonadExt m => MonadExt (StateT a m) where
+    {-# INLINE extStore #-}
+    {-# INLINE extLoad #-}
+    {-# INLINE extOut #-}
+    {-# INLINE extDebug #-}
+    {-# INLINE extAddress #-}
+    {-# INLINE extCreate #-}
+    {-# INLINE extSaveCode #-}
+    {-# INLINE extSuicide #-}
+    {-# INLINE extRefund #-}
+    {-# INLINE extIsCreate #-}
+    {-# INLINE extLog #-}
+    extStore a b c = lift $ extStore a b c
+    extLoad a b = lift $ extLoad a b
+    extOut a = lift $ extOut a
+    extDebug a = lift $ extDebug a
+    extAddress a = lift $ extAddress a
+    extCreate a = lift $ extCreate a
+    extSaveCode a b = lift $ extSaveCode a b
+    extSuicide a = lift $ extSuicide a
+    extRefund a b = lift $ extRefund a b
+    extIsCreate a = lift $ extIsCreate a
+    extLog a = lift $ extLog a
+
+
+instance MonadExt m => MonadExt (ReaderT a m) where
+    {-# INLINE extStore #-}
+    {-# INLINE extLoad #-}
+    {-# INLINE extOut #-}
+    {-# INLINE extDebug #-}
+    {-# INLINE extAddress #-}
+    {-# INLINE extCreate #-}
+    {-# INLINE extSaveCode #-}
+    {-# INLINE extSuicide #-}
+    {-# INLINE extRefund #-}
+    {-# INLINE extIsCreate #-}
+    {-# INLINE extLog #-}
+    extStore a b c = lift $ extStore a b c
+    extLoad a b = lift $ extLoad a b
+    extOut a = lift $ extOut a
+    extDebug a = lift $ extDebug a
+    extAddress a = lift $ extAddress a
+    extCreate a = lift $ extCreate a
+    extSaveCode a b = lift $ extSaveCode a b
+    extSuicide a = lift $ extSuicide a
+    extRefund a b = lift $ extRefund a b
+    extIsCreate a = lift $ extIsCreate a
+    extLog a = lift $ extLog a
