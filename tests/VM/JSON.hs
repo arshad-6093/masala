@@ -7,7 +7,6 @@ module VM.JSON where
 import qualified Data.Map.Strict as M
 import Masala.Word
 import Masala.Instruction hiding (Spec,spec)
-import Masala.Ext
 import Masala.Ext.Simple
 import Masala.VM
 import Masala.VM.Types
@@ -24,7 +23,6 @@ import Control.Exception
 import Control.Monad
 import Test.Hspec
 import System.Directory
-import Control.Lens
 
 
 
@@ -111,10 +109,10 @@ actionSuicides ed = over edAccts (M.filterWithKey isSuicide) ed
 -}
 
 validateRun :: String -> VMTest -> (VMResult,VMState,ExtData) -> TestResult
-validateRun n t o@(vr,vs,ed) = either (Failure n t o) (const (Success n)) check
+validateRun n t o@(vr,_vs,ed) = either (Failure n t o) (const (Success n)) check
     where check = checkPost (vpost t) >> checkOutput (vout t)
           checkPost Nothing = Right ()
-          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct ts) (_edAccts ed)
+          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct (testAccts ts)) (_edAccts ed)
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
               case vr of
@@ -140,14 +138,14 @@ assertEqual msg a b | a == b = return ()
                                show a ++ ", actual=" ++ show b
 
 runVMTest :: Bool -> String -> VMTest -> IO (Either String (VMResult, VMState, ExtData))
-runVMTest dbg tname test = do
+runVMTest dbg testname test = do
   when dbg $ do
     putStrLn ("Test: " ++ show test)
     putStrLn ("Prog: " ++ show tbc)
   if null tbc then return $ Right (Final [],vmstate,exdata)
   else fixup <$> runMExt (launchVM vmstate env Nothing) exdata
     where vmstate = emptyState gas'
-          fixup ((Left err,_),_) = Left $ "Test failed: " ++ tname ++ ": " ++ err
+          fixup ((Left err,_),_) = Left $ "Test failed: " ++ testname ++ ": " ++ err
           fixup ((Right r,vs),e) = Right (r,vs,e)
           env = Env {
                _debug = dbg
@@ -171,7 +169,7 @@ runVMTest dbg tname test = do
           tenv = venv test
           tbc = concatMap toByteCode (parse (getWords (ecode ex)))
           gas' = fromIntegral $ egas ex
-          exdata = ExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty [] dbg
+          exdata = ExtData (M.mapWithKey toEacct (testAccts (vpre test)))  S.empty S.empty M.empty [] dbg
 
 
 toEacct :: Address -> TestAcct -> ExtAccount
@@ -179,10 +177,10 @@ toEacct k acct = ExtAccount {
                    _acctCode = getWords (acode acct)
                  , _acctBalance = fromIntegral $ abalance acct
                  , _acctAddress = k
-                 , _acctStore = astorage acct
+                 , _acctStore = testStore $ astorage acct
                  }
 
-type TestAccts = M.Map Address TestAcct
+newtype TestAccts = TestAccts { testAccts :: M.Map Address TestAcct } deriving (Eq,Show)
 
 data VMTest = VMTest {
       vexec :: TestExec
@@ -237,19 +235,21 @@ data TestLog = TestLog {
 instance FromJSON TestLog where parseJSON = parseDropPfxJSON 1
 
 
+newtype TestStore = TestStore { testStore :: M.Map U256 U256 } deriving (Eq,Show)
+
+
 data TestAcct = TestAcct {
       abalance :: U256
     , acode :: WordArray
     , anonce :: U256
-    , astorage :: M.Map U256 U256
+    , astorage :: TestStore
 } deriving (Eq,Show,Generic)
 instance FromJSON TestAcct where parseJSON = parseDropPfxJSON 1
 
-instance FromJSON v => FromJSON (M.Map U256 v) where
-    parseJSON = parseMap (either error id . readHex)
-instance FromJSON v => FromJSON (M.Map Address v) where
-    parseJSON = parseMap (either error id . readHex)
-
+instance FromJSON TestAccts where
+    parseJSON = fmap TestAccts . parseMap (either error id . readHex)
+instance FromJSON TestStore where
+    parseJSON = fmap TestStore . parseMap (either error id . readHex)
 
 parseMap :: (FromJSON (M.Map k' v), Ord k) =>
             (k' -> k) -> Value -> Parser (M.Map k v)

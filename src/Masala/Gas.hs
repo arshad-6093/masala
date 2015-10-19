@@ -2,11 +2,12 @@
 module Masala.Gas where
 
 import Masala.Word
+import Masala.VM.Types
 import Masala.Instruction
 import qualified Data.Map as M
 import Prelude hiding (EQ,LT,GT)
 import Data.Maybe
-import Masala.Ext
+
 
 data GasCalc =
     MemSize U256

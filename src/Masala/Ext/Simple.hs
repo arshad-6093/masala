@@ -3,7 +3,8 @@ module Masala.Ext.Simple where
 
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Masala.Ext
+import Masala.VM.Types
+import Masala.Word
 import Control.Lens
 import Control.Monad.IO.Class
 import Control.Monad

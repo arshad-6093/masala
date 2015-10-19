@@ -14,7 +14,6 @@ module Masala.VM.Types where
 import Control.Lens
 import Masala.Word
 import Masala.Instruction
-import Masala.Ext
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import Control.Monad.Reader
@@ -29,6 +28,10 @@ data Prog = Prog {
     , pCodeMap :: M.Map U256 Int
 } deriving (Eq, Show)
 
+
+type Gas = Integer
+
+
 type Stack = [U256]
 type Mem = M.Map U256 U8
 type Ctr = Int
@@ -39,7 +42,6 @@ data VMState = VMState {
     , _gas :: Gas
 } deriving (Eq,Show)
 
-$(makeLenses ''VMState)
 
 
 data CallAction = SaveMem U256 U256 | SaveCode Address deriving (Eq,Show)
@@ -71,7 +73,6 @@ data Env = Env {
     , _gaslimit :: Gas
 } deriving (Eq,Show)
 
-$(makeLenses ''Env)
 
 
 data VMResult =
@@ -89,8 +90,23 @@ data VMResult =
 newtype VM m a = VM { unVM :: ExceptT String (ReaderT Env (StateT VMState m)) a }
     deriving (Functor,Applicative,Monad,MonadError String,MonadReader Env,MonadState VMState)
 
-instance (MonadExt m) => MonadExt (VM m) where
 
+
+class (Monad m) => MonadExt m where
+    extStore :: Address -> U256 -> U256 -> m ()
+    extLoad :: Address -> U256 -> m (Maybe U256)
+    extOut :: String -> m ()
+    extDebug :: String -> m ()
+    extAddress :: Address -> m (Maybe ExtAccount)
+    extCreate :: Gas -> m ExtAccount
+    extSaveCode :: Address -> [U8] -> m ()
+    extSuicide :: Address -> m Bool
+    extRefund :: Address -> Gas -> m ()
+    extIsCreate :: Address -> m Bool
+    extLog :: LogEntry -> m ()
+
+
+instance (MonadExt m) => MonadExt (VM m) where
     {-# INLINE extStore #-}
     {-# INLINE extLoad #-}
     {-# INLINE extOut #-}
@@ -133,3 +149,37 @@ emptyVMEnv :: Env
 emptyVMEnv = Env False False mempty (Prog mempty mempty) 0 0 0 0 0 0 0 0 0 0 0 0
 emptyVMState :: VMState
 emptyVMState = VMState mempty 0 mempty 0
+
+
+
+data ExtAccount = ExtAccount {
+      _acctCode :: [U8]
+    , _acctBalance :: Gas
+    , _acctAddress :: Address
+    , _acctStore :: M.Map U256 U256
+    } deriving (Eq)
+
+
+instance Show ExtAccount where
+    show (ExtAccount c b a s) =
+        "ExtAccount {code=" ++ sc c ++ ", bal=" ++ show b ++ ", addy=" ++
+                         show a ++ ", store=" ++ show s
+            where sc [] = "[empty]"
+                  sc _ = "*bytecode*"
+
+
+toAddress :: Integral i => i -> Address
+toAddress u = fromIntegral (u `mod` (2 ^ (160 :: Int)))
+
+
+data LogEntry = LogEntry {
+      logAddress :: Address
+    , logBlock :: U256
+    , logTopics :: [U256]
+    , logData :: [U8]
+} deriving (Eq,Show)
+
+
+$(makeLenses ''VMState)
+$(makeLenses ''Env)
+$(makeLenses ''ExtAccount)

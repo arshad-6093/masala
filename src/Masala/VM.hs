@@ -18,7 +18,6 @@ import Control.Applicative
 import Prelude hiding (LT,GT,EQ,log)
 import qualified Data.Map.Strict as M
 import Masala.Gas
-import Masala.Ext
 import Masala.Ext.Simple
 import qualified Data.Set as S
 import Masala.VM.Types
@@ -65,7 +64,7 @@ postEx env (Right (Call g addr codes _glimit cdata action), vm) = do
         (Left _,_) -> return r
         (Right (Call {}),v) -> return $ (Left $ "VM mrror: Call returned from 'runVM': " ++ show r,v)
         (Right (Final o),vm') ->
-            launchVM vm env (Just $ Resume 1 o action)
+            launchVM vm' env (Just $ Resume 1 o action)
 
 
 stepVM :: (MonadExt m) => Maybe Resume -> VM m VMResult

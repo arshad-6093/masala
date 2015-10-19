@@ -12,7 +12,6 @@ import Data.Aeson hiding ((.=))
 import qualified Data.Aeson as A ((.=))
 import Data.Aeson.Types (fieldLabelModifier,Parser)
 import Control.Monad.Except
-import Masala.Ext
 import qualified Data.Text as T
 import qualified Data.Char as C
 import qualified Data.HashMap.Strict as HM
@@ -127,6 +126,7 @@ instance FromJSON EthCall where parseJSON = parseDropPfxJSON 1
 rpcs :: HM.HashMap String RPCall
 rpcs = foldl (\m r -> HM.insert (lc1 (show r)) r m) HM.empty [minBound..maxBound]
     where lc1 (c:cs) = C.toLower c:cs
+          lc1 _ = error "rpcs: bug"
 
 runRPC :: String -> [Value] -> RPC Value
 runRPC c v = do
@@ -227,3 +227,4 @@ callVM toA fromA callgas gasPx callvalue ccode cdata' = do
         rpcEnv .= env'
         rpcExt .= ed
         return o
+      er -> error $ "callVM: result not final: " ++ show er

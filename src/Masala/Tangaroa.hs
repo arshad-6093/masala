@@ -9,7 +9,6 @@ import Data.IORef
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import GHC.Generics
-import Masala.Ext
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Data.Vector as V

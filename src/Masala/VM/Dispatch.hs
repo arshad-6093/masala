@@ -7,7 +7,6 @@ module Masala.VM.Dispatch where
 import Masala.Instruction
 import Masala.Word
 import Masala.VM.Types
-import Masala.Ext
 import Control.Monad
 import Prelude hiding (LT,GT,EQ,log)
 import Control.Lens

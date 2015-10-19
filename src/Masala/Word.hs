@@ -10,6 +10,7 @@ module Masala.Word
      U256 (..)
     ,S256 (..)
     ,U8 (..)
+    ,Address (..)
     ,module Data.Bits
     ,showHex,showHexPad,showHexs,showBinary
     ,readHex,readHexs,hexSize
@@ -42,6 +43,13 @@ newtype S256 = S256 Int256 deriving (Num,Eq,Show,Ord,Bounded,Enum,Integral,Real,
 -- | Newtype over Word8 to get hex output, mainly
 newtype U8 = U8 Word8 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic,Bits,Read,FiniteBits)
 instance Show U8 where show (U8 u) = showHex u
+
+
+newtype Address = Address Word160 deriving (Num,Eq,Ord,Bounded,Enum,Integral,Real,Generic)
+instance Show Address where show (Address u) = showHex u
+
+instance FromJSON Address where parseJSON = parseJSONHex "Address"
+
 
 
 showHex :: (Integral a, Show a) => a -> String
