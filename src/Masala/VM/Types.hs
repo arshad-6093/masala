@@ -90,17 +90,29 @@ newtype VM m a = VM { unVM :: ExceptT String (ReaderT Env (StateT VMState m)) a 
     deriving (Functor,Applicative,Monad,MonadError String,MonadReader Env,MonadState VMState)
 
 instance (MonadExt m) => MonadExt (VM m) where
-    extStore a b = lift . extStore a b
-    extLoad a = lift . extLoad a
-    extOut = lift . extOut
-    extDebug = lift . extDebug
-    extAddress = lift . extAddress
-    extCreate = lift . extCreate
-    extSaveCode a = lift . extSaveCode a
-    extSuicide = lift . extSuicide
-    extRefund a = lift . extRefund a
-    extIsCreate = lift . extIsCreate
-    extLog = lift . extLog
+
+    {-# INLINE extStore #-}
+    {-# INLINE extLoad #-}
+    {-# INLINE extOut #-}
+    {-# INLINE extDebug #-}
+    {-# INLINE extAddress #-}
+    {-# INLINE extCreate #-}
+    {-# INLINE extSaveCode #-}
+    {-# INLINE extSuicide #-}
+    {-# INLINE extRefund #-}
+    {-# INLINE extIsCreate #-}
+    {-# INLINE extLog #-}
+    extStore a b c = lift $ extStore a b c
+    extLoad a b = lift $ extLoad a b
+    extOut a = lift $ extOut a
+    extDebug a = lift $ extDebug a
+    extAddress a = lift $ extAddress a
+    extCreate a = lift $ extCreate a
+    extSaveCode a b = lift $ extSaveCode a b
+    extSuicide a = lift $ extSuicide a
+    extRefund a b = lift $ extRefund a b
+    extIsCreate a = lift $ extIsCreate a
+    extLog a = lift $ extLog a
 
 instance MonadTrans VM where
     lift g = VM $ ExceptT $ ReaderT $ \_ -> StateT $ \s -> fmap (\v -> (Right v,s)) $ g

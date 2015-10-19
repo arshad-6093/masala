@@ -12,8 +12,6 @@ import Masala.Word
 import Data.Aeson hiding ((.=))
 import Control.Lens hiding (op)
 import qualified Data.Map.Strict as M
-import Control.Monad.Reader
-import Control.Monad.State.Strict
 import GHC.Generics
 
 type Gas = Integer
@@ -50,8 +48,6 @@ data LogEntry = LogEntry {
     , logTopics :: [U256]
     , logData :: [U8]
 } deriving (Eq,Show)
-
-
 
 
 class (Monad m) => MonadExt m where
