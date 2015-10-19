@@ -55,14 +55,14 @@ data LogEntry = LogEntry {
 
 
 class (Monad m) => MonadExt m where
-      extStore :: Address -> U256 -> U256 -> m ()
-      extLoad :: Address -> U256 -> m (Maybe U256)
-      extOut :: String -> m ()
-      extDebug :: String -> m ()
-      extAddress :: Address -> m (Maybe ExtAccount)
-      extCreate :: Gas -> m ExtAccount
-      extSaveCode :: Address -> [U8] -> m ()
-      extSuicide :: Address -> m Bool
-      extRefund :: Address -> Gas -> m ()
-      extIsCreate :: Address -> m Bool
-      extLog :: LogEntry -> m ()
+    extStore :: Address -> U256 -> U256 -> m ()
+    extLoad :: Address -> U256 -> m (Maybe U256)
+    extOut :: String -> m ()
+    extDebug :: String -> m ()
+    extAddress :: Address -> m (Maybe ExtAccount)
+    extCreate :: Gas -> m ExtAccount
+    extSaveCode :: Address -> [U8] -> m ()
+    extSuicide :: Address -> m Bool
+    extRefund :: Address -> Gas -> m ()
+    extIsCreate :: Address -> m Bool
+    extLog :: LogEntry -> m ()

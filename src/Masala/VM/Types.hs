@@ -105,7 +105,7 @@ instance (MonadExt m) => MonadExt (VM m) where
 instance MonadTrans VM where
     lift g = VM $ ExceptT $ ReaderT $ \_ -> StateT $ \s -> fmap (\v -> (Right v,s)) $ g
 
-
+{-# INLINE runVM #-}
 runVM :: (Monad m) => VMState -> Env -> VM m a -> m (Either String a, VMState)
 runVM vm env go = runStateT (runReaderT (runExceptT (unVM go)) env) vm
 

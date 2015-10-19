@@ -70,6 +70,18 @@ extEval o = fmap fst . runMExt o
 
 
 instance MonadExt MExt where
+
+    {-# INLINE extStore #-}
+    {-# INLINE extLoad #-}
+    {-# INLINE extOut #-}
+    {-# INLINE extDebug #-}
+    {-# INLINE extAddress #-}
+    {-# INLINE extCreate #-}
+    {-# INLINE extSaveCode #-}
+    {-# INLINE extSuicide #-}
+    {-# INLINE extRefund #-}
+    {-# INLINE extIsCreate #-}
+    {-# INLINE extLog #-}
     extStore a k v = extOver (edAccts . ix a . acctStore)
                      (\m -> if v == 0 then M.delete k m else M.insert k v m)
     extLoad a k = extFirstOf (edAccts . ix a . acctStore . ix k)
