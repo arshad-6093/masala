@@ -13,6 +13,7 @@ testMemory :: Spec
 testMemory = do
   it "mstore->mload" $ (runD $ mstore 0 20 >> mload 0) `shouldOutput` 20
   it "mstore8->mload" $ (runD $ mstore8 31 20 >> mload 0) `shouldOutput` 20
+  it "mload shouldn't blow up" $ (runD $ mload maxBound) `shouldOutput` 0
 
 testMSize :: Spec
 testMSize = do

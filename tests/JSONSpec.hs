@@ -54,7 +54,7 @@ fileSpec tf =
                     tr <- runIO $ runTest False n vt
                     let success = return () :: Expectation
                     case tr of
-                      (Success {}) -> it n success
+                      (Success sn) -> it sn success
                       r -> case vskip vt of
                              Just reason -> it (n ++ " [UNSUPPORTED, " ++ reason ++ "]: " ++ show r) success
                              Nothing -> it n $ expectationFailure (show r)

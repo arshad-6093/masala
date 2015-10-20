@@ -169,16 +169,6 @@ suicide addr = do
 addy :: MonadExt m => Address -> VM m (Maybe ExtAccount)
 addy k = extAddress k
 
-sload :: MonadExt m => U256 -> VM m U256
-sload i = do
-  s <- view address
-  fromMaybe 0 <$> extLoad s i
-
-sstore :: MonadExt m => U256 -> U256 -> VM m ()
-sstore a b = do
-  s <- view address
-  extStore s a b
-
 
 -- TODO: C++ code (per tests) routinely masks after (t - 3) bits whereas this
 -- code seems to do the right thing per spec.

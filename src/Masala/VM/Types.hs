@@ -21,15 +21,15 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Except
 
-
+-- | Bytecode program for VM use.
 data Prog = Prog {
-      -- parsed bytecode
+      -- | parsed bytecode
       pCode :: V.Vector ByteCode
-      -- map of valid codepoints to pCode indexes
+      -- | map of valid codepoints to vector indices
     , pCodeMap :: M.Map U256 Int
 } deriving (Eq, Show)
 
-
+-- | Gas as unbounded integer (actually hit tests with gas > U256)
 type Gas = Integer
 
 

@@ -70,7 +70,7 @@ computeMemGas newSzBytes = do
 
 computeStoreGas :: MonadExt m => U256 -> U256 -> VM m Gas
 computeStoreGas l v' = do
-  v <- mload l
+  v <- sload l
   if v == 0 && v' /= 0
   then return gas_sset
   else if v /= 0 && v' == 0

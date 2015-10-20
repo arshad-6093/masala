@@ -1962,7 +1962,7 @@
             }
         }
     },
-    "push32AndSuicide" : {
+    "push32AndSuicide" : { "skip": "Not supporting absurd create-on-overflow nonsense",
         "callcreates" : [
         ],
         "env" : {

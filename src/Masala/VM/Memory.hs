@@ -9,7 +9,8 @@ import qualified Data.Map.Strict as M
 import Control.Lens
 
 mload :: Monad m => U256 -> VM m U256
-mload i = do
+mload i | i +^ 31 <= i = return 0
+        | otherwise = do
   m <- use mem
   return $ head . u8sToU256s . map (fromMaybe 0 . (`M.lookup` m)) $ [i .. i+31]
 
@@ -50,3 +51,16 @@ msize :: Monad m => VM m U256
 msize = (* 32) . ceiling .  (/ (32 :: Float)) . fromIntegral . succ . maximum' . M.keys <$> use mem
     where maximum' [] = 0
           maximum' vs = maximum vs
+
+
+
+
+sload :: MonadExt m => U256 -> VM m U256
+sload i = do
+  s <- view address
+  fromMaybe 0 <$> extLoad s i
+
+sstore :: MonadExt m => U256 -> U256 -> VM m ()
+sstore a b = do
+  s <- view address
+  extStore s a b
