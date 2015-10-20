@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
-module VM.JSON where
+module JSONSpec where
 
 import qualified Data.Map.Strict as M
 import Masala.Word
@@ -148,8 +148,7 @@ runVMTest dbg testname test = do
           fixup ((Left err,_),_) = Left $ "Test failed: " ++ testname ++ ": " ++ err
           fixup ((Right r,vs),e) = Right (r,vs,e)
           env = Env {
-               _debug = dbg
-             , _doGas = True
+               _gasModel = EthGasModel
              , _callData = V.fromList (getWords (edata ex))
              , _prog = toProg tbc
              , _address = eaddress ex

@@ -27,15 +27,14 @@ instance FromJSON RPCCmd
 type RPCState = (Env,ExtData)
 
 initRPCState :: RPCState
-initRPCState = (Env dbug enableGas calldata (toProg []) (_acctAddress acc)
+initRPCState = (Env EthGasModel calldata (toProg []) (_acctAddress acc)
                 addr
                 addr
                 0 0 0 0 0 0 0 0 0,
                ex)
     where addr = 123456
-          enableGas = True
           acc = ExtAccount [] 0 addr M.empty
-          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty [] False
+          ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty [] dbug
           calldata = V.fromList [0,1,2,3,4]
           dbug = True
 

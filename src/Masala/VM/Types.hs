@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -54,9 +55,15 @@ data Resume = Resume {
     } deriving (Eq,Show)
 
 
+data GasModel =
+    FixedGasModel Gas |
+    EthGasModel
+    deriving (Eq,Show)
+
+
+
 data Env = Env {
-      _debug :: Bool
-    , _doGas :: Bool
+      _gasModel :: GasModel
     , _callData :: V.Vector U8
     , _prog :: Prog
     , _address :: Address
@@ -125,7 +132,7 @@ data ControlFlow =
     deriving (Show)
 
 emptyVMEnv :: Env
-emptyVMEnv = Env False False mempty (Prog mempty mempty) 0 0 0 0 0 0 0 0 0 0 0 0
+emptyVMEnv = Env (FixedGasModel 1) mempty (Prog mempty mempty) 0 0 0 0 0 0 0 0 0 0 0 0
 emptyVMState :: VMState
 emptyVMState = VMState mempty 0 mempty 0
 

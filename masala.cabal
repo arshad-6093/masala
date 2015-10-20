@@ -20,12 +20,13 @@ library
                   Masala.VM
                   Masala.VM.Types
                   Masala.VM.Dispatch
-                  Masala.Ext
-                  Masala.Gas
+                  Masala.VM.Memory
+                  Masala.VM.Gas
                   Masala.Ext.Simple
                   Masala.Instruction
                   Masala.RPC
                   Masala.Tangaroa
+                  Masala.Word
   -- other-modules:
   -- other-extensions:
   ghc-options: -Wall

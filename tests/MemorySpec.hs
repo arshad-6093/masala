@@ -1,9 +1,13 @@
-module DispatchSpec where
+module MemorySpec where
 
 import Masala.VM.Types
-import Masala.VM.Dispatch
+import Masala.VM.Memory
 import Test.Hspec
 
+spec :: Spec
+spec = do
+  describe "testMemory" testMemory
+  describe "testMSize" testMSize
 
 testMemory :: Spec
 testMemory = do

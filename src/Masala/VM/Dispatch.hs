@@ -7,6 +7,8 @@ module Masala.VM.Dispatch where
 import Masala.Instruction
 import Masala.Word
 import Masala.VM.Types
+import Masala.VM.Memory
+import Masala.VM.Gas
 import Control.Monad
 import Prelude hiding (LT,GT,EQ,log)
 import Control.Lens
@@ -14,7 +16,6 @@ import Data.Maybe
 import qualified Data.Vector as V
 import qualified Data.Map.Strict as M
 import Control.Monad.Except
-import Masala.Gas
 import qualified Data.ByteArray as BA
 import Crypto.Hash
 
@@ -107,10 +108,6 @@ callDataLoad i = do
         check (a:_) = a
     return . check . u8sToU256s . map (fromMaybe 0 . (cd V.!?)) $ [fromIntegral i .. fromIntegral i+31]
 
-msize :: Monad m => VM m U256
-msize = (* 32) . ceiling .  (/ (32 :: Float)) . fromIntegral . succ . maximum' . M.keys <$> use mem
-    where maximum' [] = 0
-          maximum' vs = maximum vs
 
 next :: Monad m => VM m ControlFlow
 next = return Next
@@ -166,48 +163,11 @@ create cgas codeloc codeoff = do
 suicide :: MonadExt m => Address -> VM m ControlFlow
 suicide addr = do
   isNewSuicide <- extSuicide addr
-  when isNewSuicide $ refund gas_suicide
+  when isNewSuicide refundSuicide
   return Stop
 
 addy :: MonadExt m => Address -> VM m (Maybe ExtAccount)
 addy k = extAddress k
-
-mload :: Monad m => U256 -> VM m U256
-mload i = do
-  m <- use mem
-  return $ head . u8sToU256s . map (fromMaybe 0 . (`M.lookup` m)) $ [i .. i+31]
-
-
-mstore :: Monad m => U256 -> U256 -> VM m ()
-mstore i v = mem %= M.union (M.fromList $ reverse $ zip (reverse [i .. i + 31]) (reverse (u256ToU8s v) ++ repeat 0))
-
-mstore8 :: Monad m => U256 -> U8 -> VM m ()
-mstore8 i b = mem %= M.insert i b
-
-
-mloads :: Monad m => U256 -> U256 -> VM m [U8]
-mloads loc len | len < 1 = return []
-               | otherwise = do
-  m <- use mem
-  return $ map (fromMaybe 0 . (`M.lookup` m)) $ [loc .. loc + len - 1]
-
-
-mstores :: Monad m => U256 -> U256 -> U256 -> [U8] -> VM m ()
-mstores memloc off len v
-    | len < 1 = return ()
-    | off +^ len > fromIntegral (length v) = return ()
-    | otherwise = mem %= M.union (M.fromList $ zip [memloc .. memloc + len - 1] (drop (fromIntegral off) v))
-
-
-
-infixl 6 +^
-
-(+^) :: (Integral a, Bounded a) => a -> a -> a
-(+^) = overflowOp (+)
-
-overflowOp :: forall a . (Integral a, Bounded a) => (Integer -> Integer -> Integer) -> a -> a -> a
-overflowOp f a b = if r > fromIntegral (maxBound :: a) then maxBound else fromIntegral r
-    where r = f (fromIntegral a) (fromIntegral b)
 
 sload :: MonadExt m => U256 -> VM m U256
 sload i = do
@@ -275,21 +235,6 @@ smod :: S256 -> S256 -> S256
 smod a b | b == 0 = 0
          | otherwise = (abs a `mod` abs b) * signum a
 
-deductGas :: MonadExt m => Gas -> VM m ()
-deductGas total = do
-  enabled <- view doGas
-  when enabled $ do
-    pg <- use gas
-    let gas' = pg - total
-    if gas' < 0
-    then do
-      gas .= 0
-      throwError $ "Out of gas, gas=" ++ show pg ++
-                 ", required=" ++ show total ++
-                 ", balance= " ++ show gas'
-    else do
-      extDebug $ "gas used: " ++ show total
-      gas .= gas'
 
 err :: Monad m => String -> VM m a
 err msg = do
@@ -317,10 +262,6 @@ pops n | n == 0 = return []
     stack .= drop n s
     return (take n s)
 
-refund :: MonadExt m => Gas -> VM m ()
-refund g = do
-  a <- view address
-  extRefund a g
 
 
 sha3 :: [U8] -> U256

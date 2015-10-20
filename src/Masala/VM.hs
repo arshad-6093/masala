@@ -14,14 +14,14 @@ import Control.Lens hiding (op)
 import Masala.Instruction
 import Masala.Word
 import qualified Data.Vector as V
-import Control.Applicative
 import Prelude hiding (LT,GT,EQ,log)
 import qualified Data.Map.Strict as M
-import Masala.Gas
 import Masala.Ext.Simple
 import qualified Data.Set as S
 import Masala.VM.Types
 import Masala.VM.Dispatch
+import Masala.VM.Memory
+import Masala.VM.Gas
 
 
 
@@ -104,47 +104,11 @@ exec = do
   let (Spec _ stackin _ pspec) = spec i
   svals <- pops stackin
   debugOut bc svals
-  handleGas i pspec svals
+  gm <- view gasModel
+  handleGas gm i pspec svals
   if null ws
   then dispatch i (pspec,svals)
   else mapM_ push (u8sToU256s ws) >> next
-
-handleGas :: MonadExt m => Instruction -> Maybe ParamSpec -> [U256] -> VM m ()
-handleGas i ps svs = do
-  let (callg,a) = computeGas i (ps,svs)
-  calcg <- case a of
-            Nothing -> return 0
-            (Just c) -> case c of
-                        (MemSize sz) -> computeMemGas sz
-                        (StoreOp loc off) -> computeStoreGas loc off
-                        (GasCall sz addr) -> (+) <$> computeMemGas sz <*> computeCallGas addr
-  deductGas (calcg + callg)
-
-computeMemGas :: Monad m => U256 -> VM m Gas
-computeMemGas newSzBytes = do
-  let toWordSize v = (v + 31) `div` 32
-      newSzWords = fromIntegral $ toWordSize newSzBytes
-      fee s = ((s * s) `div` 512) + (s * gas_memory)
-  oldSzWords <- fromIntegral <$> msize
-  return $ if newSzWords > oldSzWords
-           then fee newSzWords - fee oldSzWords
-           else 0
-
-computeStoreGas :: MonadExt m => U256 -> U256 -> VM m Gas
-computeStoreGas l v' = do
-  v <- mload l
-  if v == 0 && v' /= 0
-  then return gas_sset
-  else if v /= 0 && v' == 0
-       then refund gas_sclear >> return gas_sreset
-       else return gas_sreset
-
-
-computeCallGas :: MonadExt m => Maybe Address -> VM m Gas
-computeCallGas Nothing = return 0
-computeCallGas (Just a) = do
-  isNew <- extIsCreate a
-  return $ if isNew then gas_callnewaccount else 0
 
 
 debugOut :: (MonadExt m) => ByteCode -> [U256] -> VM m ()
@@ -168,7 +132,7 @@ runHex c d = runVM_ (either error id (parseHex c)) (either error id (readHexs d)
 
 runVM_ :: ToByteCode a => [a] -> [U8] -> IO ((Either String VMResult, VMState),ExtData)
 runVM_ bc calld = flip runMExt ex $ launchVM (emptyState gas')
-            (Env dbug enableGas calldata
+            (Env EthGasModel calldata
              (toProg tbc)
              (_acctAddress acc)
              addr
@@ -177,9 +141,7 @@ runVM_ bc calld = flip runMExt ex $ launchVM (emptyState gas')
             Nothing
     where tbc = concatMap toByteCode bc
           addr = 123456
-          enableGas = True
           gas' = 10000000
           acc = ExtAccount (bcsToU8s tbc) 0 addr M.empty
           ex = ExtData (M.fromList [(addr,acc)]) S.empty S.empty M.empty [] True
           calldata = V.fromList calld
-          dbug = True
