@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Masala.Tangaroa where
+module Masala.Repl where
 
 import Masala.RPC
 import Masala.Ext.Simple
