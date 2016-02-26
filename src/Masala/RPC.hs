@@ -11,7 +11,7 @@ module Masala.RPC where
 
 import Data.Aeson hiding ((.=))
 import qualified Data.Aeson as A ((.=))
-import Data.Aeson.Types (fieldLabelModifier,Parser)
+import Data.Aeson.Types (fieldLabelModifier,defaultOptions,Parser)
 import Control.Monad.Except
 import qualified Data.Text as T
 import qualified Data.Char as C
