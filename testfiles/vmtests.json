@@ -86,7 +86,7 @@
             }
         }
     },
-    "suicide" : {
+    "suicide" : { "skip": "Not supporting absurd create-on-overflow nonsense EVEN MORE ABSURD TO CREATE ON SUICIDE",
         "callcreates" : [
         ],
         "env" : {

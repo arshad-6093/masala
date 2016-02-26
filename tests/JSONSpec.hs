@@ -2,88 +2,98 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
-module VM.JSON where
+-- | Supports the go-ethereum and cpp-ethereum json test cases, either as an HSpec or a report in IO.
+module JSONSpec where
 
 import qualified Data.Map.Strict as M
-import Masala.Instruction
-import Masala.Ext
+import Masala.Word
+import Masala.Instruction hiding (Spec,spec)
 import Masala.Ext.Simple
 import Masala.VM
 import Masala.VM.Types
 import Masala.RPC
-import Data.Word
 import Data.Aeson hiding ((.=),Success)
 import Data.Aeson.Types hiding (parse,Success)
 import GHC.Generics
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.Maybe
 import Prelude hiding (words)
 import qualified Data.Set as S
-import Control.Lens
 import Control.Exception
 import Control.Monad
-import Control.Lens hiding ((.=))
-import Data.Aeson.Lens
-import qualified Data.HashMap.Strict as HM
-
-runReport :: FilePath -> IO ()
-runReport tf = do
-  ts <- runFile tf
-  let tally :: (Int,Int,Int) -> TestResult -> (Int,Int,Int)
-      tally (s,f,e) r = case r of
-                        (Success {}) -> (succ s,f,e)
-                        (Failure {}) -> (s,succ f,e)
-                        (Err {}) -> (s,f,succ e)
-      pr (Success {}) = return ()
-      pr r = print r
-      (ss,fs,es) = foldl tally (0,0,0) ts
-  mapM_ pr ts
-  putStrLn $ tf ++ ": " ++ show (length ts) ++ " tests, " ++ show ss ++ " successes, " ++
-           show fs ++ " failures, " ++ show es ++ " errors"
-
-
-runFile :: FilePath -> IO [TestResult]
-runFile f = do
-  ts <- readVMTests f
-  case ts of
-    Left err -> return [Err f $ "Decode failed: " ++ err]
-    Right tcs -> mapM (uncurry (runTest False)) . M.toList $ tcs
-
-parseFile :: FilePath -> IO ()
-parseFile f = do
-  d :: Either String Value  <- eitherDecode <$> LBS.readFile f
-  case d of
-    Left e -> error e
-    Right v -> mapM_ (\(k,t)->do putStrLn $ T.unpack k;case (fromJSON t :: Result VMTest) of (Error e) -> error e; _ -> return () ) (HM.toList (view _Object v))
+import Test.Hspec
+import System.Directory
 
 
 
-readVMTests :: FilePath -> IO (Either String (M.Map String VMTest))
-readVMTests f = eitherDecode <$> LBS.readFile f
+data TestResult =
+          Success { tname :: String }
+        | Failure { tname :: String,
+                    ttest :: VMTest,
+                    tout :: (VMResult,VMState,ExtData),
+                    terr :: String }
+        | Err { tname :: String, terr :: String }
+instance Show TestResult where
+    show (Success n) = "SUCCESS: " ++ n
+    show (Err n e) = "ERROR: " ++ n ++ ": " ++ e
+    show (Failure n _t _o e) = "FAILURE: " ++ n ++ ": " ++ e
 
+-- | Runs all files in "testfiles" dir.
+spec :: Spec
+spec = do
+  tfs <- runIO (filter ((".json" ==).reverse.take 5.reverse) <$> getDirectoryContents "testfiles")
+  mapM_ (parallel.fileSpec) tfs
+
+
+-- | Run a json file in HSpec.
+fileSpec :: FilePath -> Spec
+fileSpec tf =
+    describe tf $ do
+      vts <- runIO $ readVMTests tf
+      forM_ (M.toList vts) $ \(n,vt) ->
+                  do
+                    tr <- runIO $ runTest False n vt
+                    let success = return () :: Expectation
+                    case tr of
+                      (Success sn) -> it sn success
+                      r -> case vskip vt of
+                             Just reason -> it (n ++ " [UNSUPPORTED, " ++ reason ++ "]: " ++ show r) success
+                             Nothing -> it n $ expectationFailure (show r)
+
+-- | run test file with optional debug out
+runFile :: Bool -> FilePath -> IO [TestResult]
+runFile d f = readVMTests f >>= mapM (uncurry (runTest d)) . M.toList
+
+
+-- | run one test with debug output
 runOne :: FilePath -> String -> IO TestResult
 runOne f t = do
-  ts <- readVMTests f
-  case ts of
-    Left err -> return $ Err t $ "Decode failed: " ++ err
-    Right m -> case M.lookup t m of
-                 Nothing -> return $ Err t $ "Unknown test, file " ++ f
-                 Just tc -> do
-                   r <- runTest True t tc
-                   case r of
-                     Failure{} -> putStrLn $ "Failure, testcase: " ++ show tc
-                     _ -> return ()
-                   return r
+  m <- readVMTests f
+  case M.lookup t m of
+    Nothing -> return $ Err t $ "Unknown test, file " ++ f
+    Just tc -> do
+               r <- runTest True t tc
+               case r of
+                 Failure{} -> putStrLn $ "Failure, testcase: " ++ show tc
+                 _ -> return ()
+               return r
 
 
+
+-- | parse JSON
+readVMTests :: FilePath -> IO (M.Map String VMTest)
+readVMTests f = LBS.readFile ("testfiles/" ++ f) >>= either bad return . eitherDecode
+    where bad err = throwIO $ userError $ "ERROR: decode failed: " ++ f ++ ": " ++ err
+
+-- | execute VM test
 runTest :: Bool -> String -> VMTest -> IO TestResult
 runTest dbg t tc = do
-  putStrLn "-----------------"
-  putStrLn t
-  putStrLn "-----------------"
-  let catcher :: SomeException -> IO (Either String (Output ExtData))
+  when dbg $ do
+    putStrLn "-----------------"
+    putStrLn t
+    putStrLn "-----------------"
+  let catcher :: SomeException -> IO (Either String (VMResult,VMState,ExtData))
       catcher e = return $ Left $ "Runtime exception: " ++ show e
   r <- catch (runVMTest dbg t tc) catcher
   case r of
@@ -92,28 +102,23 @@ runTest dbg t tc = do
               else return $ Err t $ "Runtime failure: " ++ e
     Right o -> do
            let tr = validateRun t tc o
-           print tr
+           when dbg $ print tr
            return tr
+{-
+actionSuicides :: ExtData -> ExtData
+actionSuicides ed = over edAccts (M.filterWithKey isSuicide) ed
+    where isSuicide a _ = not $ a `S.member` (view edSuicides ed)
+-}
 
-data TestResult =
-          Success String
-        | Failure String VMTest (Output ExtData) String
-        | Err String String
-
-instance Show TestResult where
-    show (Success n) = "\nSUCCESS: " ++ n
-    show (Err n e) = "\nERROR: " ++ n ++ ": " ++ e
-    show (Failure n t o e) = "\nFAILURE: " ++ n ++ ": " ++ e
-
-validateRun :: String -> VMTest -> Output ExtData -> TestResult
-validateRun n t o = either (Failure n t o) (const (Success n)) check
+validateRun :: String -> VMTest -> (VMResult,VMState,ExtData) -> TestResult
+validateRun n t o@(vr,_vs,ed) = either (Failure n t o) (const (Success n)) check
     where check = checkPost (vpost t) >> checkOutput (vout t)
           checkPost Nothing = Right ()
-          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct ts) (_edAccts . _vmext . snd $ o)
+          checkPost (Just ts) = assertPostAcctsMatch (M.mapWithKey toEacct (testAccts ts)) (_edAccts ed)
           checkOutput Nothing = Right ()
           checkOutput (Just ws) =
-              case fst o of
-                Final os -> assertEqual "output matches" (getWords ws) (dropWhile (==0) os)
+              case vr of
+                Final os -> assertEqual "output matches" (getWords ws) os
                 r -> Left $ "FAILED: non-final result expected " ++ show ws ++ ", result: " ++ show r
 
 assertPostAcctsMatch :: M.Map Address ExtAccount -> M.Map Address ExtAccount -> Either String ()
@@ -134,20 +139,19 @@ assertEqual msg a b | a == b = return ()
                  | otherwise = Left $ "FAILED: " ++ msg ++ ", intended=" ++
                                show a ++ ", actual=" ++ show b
 
-runVMTest :: Bool -> String -> VMTest -> IO (Either String (Output ExtData))
-runVMTest dbg tname test = do
+runVMTest :: Bool -> String -> VMTest -> IO (Either String (VMResult, VMState, ExtData))
+runVMTest dbg testname test = do
   when dbg $ do
     putStrLn ("Test: " ++ show test)
     putStrLn ("Prog: " ++ show tbc)
-  if null tbc then return $ Right (Final [],vmstate)
-  else either (Left . (("Test failed: " ++ tname ++ ": ") ++)) Right <$>
-         runVM vmstate env Nothing
-    where vmstate = emptyState exdata gas'
+  if null tbc then return $ Right (Final [],vmstate,exdata)
+  else fixup <$> runMExt (launchVM vmstate env Nothing) exdata
+    where vmstate = emptyState gas'
+          fixup ((Left err,_),_) = Left $ "Test failed: " ++ testname ++ ": " ++ err
+          fixup ((Right r,vs),e) = Right (r,vs,e)
           env = Env {
-               _debug = dbg
-             , _doGas = True
+               _gasModel = EthGasModel
              , _callData = V.fromList (getWords (edata ex))
-             , _envExtApi = api
              , _prog = toProg tbc
              , _address = eaddress ex
              , _origin = eorigin ex
@@ -155,7 +159,7 @@ runVMTest dbg tname test = do
              , _envGas = fromMaybe 0 (vgas test)
              , _gasPrice = egasPrice ex
              , _callValue = evalue ex
-             , _prevHash = previousHash tenv
+             , _prevHash = fromMaybe 0 $ previousHash tenv
              , _coinbase = currentCoinbase tenv
              , _timestamp = currentTimestamp tenv
              , _number = currentNumber tenv
@@ -166,7 +170,7 @@ runVMTest dbg tname test = do
           tenv = venv test
           tbc = concatMap toByteCode (parse (getWords (ecode ex)))
           gas' = fromIntegral $ egas ex
-          exdata = ExtData (M.mapWithKey toEacct (vpre test))  S.empty S.empty M.empty []
+          exdata = ExtData (M.mapWithKey toEacct (testAccts (vpre test)))  S.empty S.empty M.empty [] dbg
 
 
 toEacct :: Address -> TestAcct -> ExtAccount
@@ -174,13 +178,14 @@ toEacct k acct = ExtAccount {
                    _acctCode = getWords (acode acct)
                  , _acctBalance = fromIntegral $ abalance acct
                  , _acctAddress = k
-                 , _acctStore = astorage acct
+                 , _acctStore = testStore $ astorage acct
                  }
 
-type TestAccts = M.Map Address TestAcct
+newtype TestAccts = TestAccts { testAccts :: M.Map Address TestAcct } deriving (Eq,Show)
 
 data VMTest = VMTest {
       vexec :: TestExec
+    , vskip :: Maybe String
     , vgas :: Maybe U256
     , vlogs :: Maybe [TestLog]
     , vout :: Maybe WordArray
@@ -206,7 +211,7 @@ data TestEnv = TestEnv {
     , currentGasLimit :: Maybe U256
     , currentNumber :: U256
     , currentTimestamp :: U256
-    , previousHash :: U256
+    , previousHash :: Maybe U256
 } deriving (Eq,Show,Generic)
 instance FromJSON TestEnv
 
@@ -231,19 +236,21 @@ data TestLog = TestLog {
 instance FromJSON TestLog where parseJSON = parseDropPfxJSON 1
 
 
+newtype TestStore = TestStore { testStore :: M.Map U256 U256 } deriving (Eq,Show)
+
+
 data TestAcct = TestAcct {
       abalance :: U256
     , acode :: WordArray
     , anonce :: U256
-    , astorage :: M.Map U256 U256
+    , astorage :: TestStore
 } deriving (Eq,Show,Generic)
 instance FromJSON TestAcct where parseJSON = parseDropPfxJSON 1
 
-instance (FromJSON v) => FromJSON (M.Map U256 v) where
-    parseJSON = parseMap (either error id . eitherReadHex)
-instance (FromJSON v) => FromJSON (M.Map Address v) where
-    parseJSON = parseMap (either error id . eitherReadHex)
-
+instance FromJSON TestAccts where
+    parseJSON = fmap TestAccts . parseMap (either error id . readHex)
+instance FromJSON TestStore where
+    parseJSON = fmap TestStore . parseMap (either error id . readHex)
 
 parseMap :: (FromJSON (M.Map k' v), Ord k) =>
             (k' -> k) -> Value -> Parser (M.Map k v)
