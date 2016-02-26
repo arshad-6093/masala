@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveGeneric #-}
 
+-- | Supports a subset of Eth RPC, namely eth_call and eth_sendTransaction
 module Masala.RPC where
 
 
@@ -25,11 +26,12 @@ import Data.Maybe
 import qualified Data.Vector as V
 import Masala.Ext.Simple
 
-
+-- | Monad maintains RPC state as the environment for the VM,
+-- wrapping the 'MonadExt' implementation.
 type RPC = ExceptT String (StateT Env MExt)
 
 
-
+-- | Nice type for RPC, should be in VM.Types most likely.
 newtype WordArray = WordArray { getWords :: [U8] }
     deriving (Eq,Generic)
 instance FromJSON WordArray where
@@ -125,11 +127,13 @@ rpcs = foldl (\m r -> HM.insert (lc1 (show r)) r m) HM.empty [minBound..maxBound
     where lc1 (c:cs) = C.toLower c:cs
           lc1 _ = error "rpcs: bug"
 
+-- | run RPC monad.
 runRPC :: String -> [Value] -> RPC Value
 runRPC c v = do
   rpc <- maybe (throwError $ "Invalid RPC: " ++ c) return $ HM.lookup c rpcs
   dispatchRPC rpc v
 
+-- | Fire up backend, run RPC in it.
 runRPCIO :: ExtData -> Env -> String -> [Value] -> IO (Value,Env,ExtData)
 runRPCIO e s c v = do
   (r,e') <- runMExt (runStateT (runExceptT (runRPC c v)) s) e
@@ -138,6 +142,7 @@ runRPCIO e s c v = do
     (Right o,s') -> return (o,s',e')
 
 
+-- | Dispatch.
 dispatchRPC :: RPCall -> [Value] -> RPC Value
 dispatchRPC Eth_sendTransaction [a] = arg a >>= sendTransaction
 dispatchRPC Eth_call [a,b] = arg2 a b >>= uncurry ethCall
@@ -191,7 +196,7 @@ sendTransaction m@(SendTran fromA toA callgas gasPx callvalue sdata _nonce) = do
 
 
 
-
+-- | Call into VM from RPC.
 callVM :: Address -> Address -> Maybe U256 -> Maybe U256 -> Maybe U256 -> [U8] -> [U8] -> RPC [U8]
 callVM toA fromA callgas gasPx callvalue ccode cdata' = do
   env <- get

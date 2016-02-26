@@ -1,4 +1,6 @@
 {-# LANGUAGE TupleSections #-}
+
+-- | Handles Eth-style gas computations, used by the standard gas model.
 module Masala.VM.Gas
     (
      handleGas
@@ -26,6 +28,7 @@ data GasCalc =
 
 
 -- | Compute gas for instruction and deduct, throwing error if out of gas.
+-- | This is also where different gas models are handled.
 handleGas :: MonadExt m => GasModel -> Instruction -> Maybe ParamSpec -> [U256] -> VM m ()
 handleGas (FixedGasModel g) _ _ _ = deductGas g
 handleGas _ i ps svs = do

@@ -25,7 +25,7 @@ library
                   Masala.Ext.Simple
                   Masala.Instruction
                   Masala.RPC
-                  Masala.Tangaroa
+                  Masala.Repl
                   Masala.Word
   -- other-modules:
   -- other-extensions:
@@ -42,7 +42,11 @@ library
                 , lens
                 , lens-aeson
                 , memory
-                , mtl
+              , mtl
+              , servant
+              , snap-core
+              , snap-server
+              , snap-core-cors
                 , split
                 , text
                 , transformers

@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+-- | VM types.
 module Masala.VM.Types where
 
 import Control.Lens
@@ -44,7 +45,6 @@ data VMState = VMState {
 } deriving (Eq,Show)
 
 
-
 data CallAction = SaveMem U256 U256 | SaveCode Address deriving (Eq,Show)
 
 
@@ -54,14 +54,14 @@ data Resume = Resume {
       rAction :: CallAction
     } deriving (Eq,Show)
 
-
+-- | Current gas models are either a fixed limit or the Ethereum model.
 data GasModel =
     FixedGasModel Gas |
     EthGasModel
     deriving (Eq,Show)
 
 
-
+-- | Reader environment maps to the yellow paper fairly closely.
 data Env = Env {
       _gasModel :: GasModel
     , _callData :: V.Vector U8
@@ -94,11 +94,12 @@ data VMResult =
     deriving (Eq,Show)
 
 
+-- | VM monad.
 newtype VM m a = VM { unVM :: ExceptT String (ReaderT Env (StateT VMState m)) a }
     deriving (Functor,Applicative,Monad,MonadError String,MonadReader Env,MonadState VMState)
 
 
-
+-- | Backend typeclass.
 class (Monad m) => MonadExt m where
     extStore :: Address -> U256 -> U256 -> m ()
     extLoad :: Address -> U256 -> m (Maybe U256)
@@ -135,7 +136,6 @@ emptyVMEnv :: Env
 emptyVMEnv = Env (FixedGasModel 1) mempty (Prog mempty mempty) 0 0 0 0 0 0 0 0 0 0 0 0
 emptyVMState :: VMState
 emptyVMState = VMState mempty 0 mempty 0
-
 
 
 data ExtAccount = ExtAccount {

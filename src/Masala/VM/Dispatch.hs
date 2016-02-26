@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Contains main dispatch switch and opcode implementations.
 module Masala.VM.Dispatch where
 
 import Masala.Instruction
@@ -22,6 +23,7 @@ import Crypto.Hash
 infMod :: (Integer -> Integer -> Integer) -> U256 -> U256 -> U256 -> U256
 infMod f a b c = fromIntegral ((fromIntegral a `f` fromIntegral b) `mod` fromIntegral c)
 
+-- | Pattern-matches on opcode and number of arguments to evaluate.
 dispatch :: MonadExt m => Instruction -> (Maybe ParamSpec,[U256]) -> VM m ControlFlow
 dispatch STOP _ = return Stop
 dispatch ADD (_,[a,b]) = push (a + b) >> next

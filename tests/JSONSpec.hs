@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
+-- | Supports the go-ethereum and cpp-ethereum json test cases, either as an HSpec or a report in IO.
 module JSONSpec where
 
 import qualified Data.Map.Strict as M
@@ -38,13 +39,14 @@ instance Show TestResult where
     show (Err n e) = "ERROR: " ++ n ++ ": " ++ e
     show (Failure n _t _o e) = "FAILURE: " ++ n ++ ": " ++ e
 
-
+-- | Runs all files in "testfiles" dir.
 spec :: Spec
 spec = do
   tfs <- runIO (filter ((".json" ==).reverse.take 5.reverse) <$> getDirectoryContents "testfiles")
   mapM_ (parallel.fileSpec) tfs
 
 
+-- | Run a json file in HSpec.
 fileSpec :: FilePath -> Spec
 fileSpec tf =
     describe tf $ do

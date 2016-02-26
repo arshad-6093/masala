@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
+
+-- | Backend implementation which mutates an 'ExtData',
+-- Runs in IO for debug logging.
 module Masala.Ext.Simple where
 
 import qualified Data.Map.Strict as M
@@ -9,6 +12,7 @@ import Control.Lens
 import Control.Monad.IO.Class
 import Control.Monad
 
+-- | Backend data structure.
 data ExtData = ExtData {
       _edAccts :: M.Map Address ExtAccount
     , _edSuicides :: S.Set Address
@@ -23,6 +27,7 @@ $(makeLenses ''ExtData)
 emptyExtData :: ExtData
 emptyExtData = ExtData mempty mempty mempty mempty mempty True
 
+-- | MExt is State-like + IO
 newtype MExt a = MExt { runMExt :: ExtData -> IO (a,ExtData) }
 
 instance Functor MExt where
@@ -41,31 +46,40 @@ instance Monad MExt where
                        (a',s') <- a s
                        let (MExt b) = f a'
                        b s'
+
+-- | State-like get.
 extGet :: MExt ExtData
 extGet = MExt $ \e -> return (e,e)
 
+-- | State-like set.
 extSet :: ExtData -> MExt ()
 extSet d = MExt $ \_ -> return ((),d)
 
+-- | State-like modify.
 extModify :: (ExtData -> ExtData) -> MExt ()
 extModify f = MExt $ \s -> return ((),f s)
 
+-- | Lensy state modify.
 extOver :: ASetter ExtData ExtData a b -> (a -> b) -> MExt ()
 extOver l f = extModify $ over l f
 
+-- | Lensy use.
 extUse :: (ExtData -> a) -> MExt a
 extUse f = fmap f extGet
 
+-- | Traversal on state.
 extFirstOf :: Getting (Leftmost a) ExtData a -> MExt (Maybe a)
 extFirstOf l = extUse $ firstOf l
 
+-- | Lensy read.
 extView :: Getting b ExtData b -> MExt b
 extView l = view l <$> extGet
 
-
+-- | State-like exec.
 extExec :: MExt a -> ExtData -> IO ExtData
 extExec o = fmap snd . runMExt o
 
+-- | State-like eval.
 extEval :: MExt a -> ExtData -> IO a
 extEval o = fmap fst . runMExt o
 

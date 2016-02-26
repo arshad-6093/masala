@@ -1,5 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Holds all memory operations.
 module Masala.VM.Memory where
 
 import Masala.VM.Types

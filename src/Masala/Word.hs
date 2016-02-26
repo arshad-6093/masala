@@ -4,7 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | The core datatypes ('U256', 'S256', 'Word8') and hex parsing.
+-- | The core datatypes ('U256', 'S256', 'Word8', 'Address') and hex parsing.
 module Masala.Word
     (
      U256 (..)

@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Masala.Tangaroa where
+-- | Provides a REPL, as well as the shape needed to host the VM in Juno.
+module Masala.Repl where
 
 import Masala.RPC
 import Masala.Ext.Simple
@@ -73,7 +74,7 @@ _repl = do
           o <- runEvmRPC r inp
           putStrLn o
 
-
+-- | Basic RPC ABI conversion.
 abi :: String -> [U256] -> String
 abi fn args = show (abiZero (strToSha3 fn)) ++ concatMap hex32 args
     where hex32 = reverse . take 8 . (++ cycle "0") . reverse . showHex

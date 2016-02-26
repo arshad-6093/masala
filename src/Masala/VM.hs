@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Interpreter and trampoline for EVM.
 module Masala.VM where
 
 import Control.Monad.Reader
@@ -24,12 +25,12 @@ import Masala.VM.Memory
 import Masala.VM.Gas
 
 
-
+-- | convert bytecodes to internal type.
 toProg :: [ByteCode] -> Prog
 toProg bc = Prog (V.fromList bc) (M.fromList (zipWith idx [0..] bc))
     where idx c (ByteCode n _ _) = (fromIntegral n,c)
 
-
+-- | Step program counter forward.
 forward :: Monad m => VM m Bool
 forward = do
   c <- use ctr
@@ -46,7 +47,7 @@ emptyState = VMState [] 0 M.empty
 launchVM :: MonadExt m => VMState -> Env -> Maybe Resume -> m (Either String VMResult, VMState)
 launchVM vm env callR = runVM vm env (stepVM callR) >>= postEx env
 
-
+-- | Handle post-execution, which might trampoline into a Call.
 postEx :: MonadExt m => Env -> (Either String VMResult, VMState) -> m (Either String VMResult, VMState)
 postEx _ l@(Left _,_) = return l
 postEx _ r@(Right (Final {}),_) = return r
@@ -67,6 +68,7 @@ postEx env (Right (Call g addr codes _glimit cdata action), vm) = do
             launchVM vm' env (Just $ Resume 1 o action)
 
 
+-- | Take a step.
 stepVM :: (MonadExt m) => Maybe Resume -> VM m VMResult
 stepVM r = do
   let done ws = do
@@ -97,7 +99,8 @@ stepVM r = do
              return call
 
 
-
+-- | Execute an opcode. Reads 'Spec' to determine argument count,
+-- pops that many args off stack, and dispatches.
 exec :: MonadExt m => VM m ControlFlow
 exec = do
   bc@(ByteCode _ i ws) <- current
