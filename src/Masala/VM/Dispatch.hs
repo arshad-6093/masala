@@ -258,7 +258,7 @@ pops n | n == 0 = return []
 
 sha3 :: [U8] -> U256
 sha3 = head . u8sToU256s . map fromIntegral . BA.unpack .
-       (hash :: BA.Bytes -> Digest Kekkak_256) . BA.pack . map fromIntegral
+       (hash :: BA.Bytes -> Digest Keccak_256) . BA.pack . map fromIntegral
 
 blockHash :: Monad m => U256 -> U256 -> VM m U256
 blockHash n blocknum = return $ sha3 $ u256ToU8s (n + blocknum)

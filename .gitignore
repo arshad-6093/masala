@@ -4,3 +4,4 @@ cabal.sandbox.config
 var
 TAGS
 /testfiles/VMTests
+.stack-work
