@@ -219,9 +219,7 @@ log n ws = err $ "Dispatch error LOG" ++ show n ++ ", expected 3 args: " ++ show
 
 sdiv :: S256 -> S256 -> S256
 sdiv a b | b == 0 = 0
-         -- | a == bigneg || b == (-1) = bigneg -- go code doesn't like this apparently
          | otherwise = (abs a `div` abs b) * (signum a * signum b)
-         -- where bigneg = (-2) ^ (255 :: Int)
 
 smod :: S256 -> S256 -> S256
 smod a b | b == 0 = 0
