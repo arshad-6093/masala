@@ -98,7 +98,9 @@ matrix:
     compiler: ": #stack default osx"
     os: osx
     addons:
-      artifacts: true
+      artifacts:
+        paths:
+          - .stack-work/dist/x86_64-osx/Cabal-1.22.5.0/build/masala/masala
 
   # Travis includes an OS X which is incompatible with GHC 7.8.4
   #- env: BUILD=stack ARGS="--resolver lts-2"
