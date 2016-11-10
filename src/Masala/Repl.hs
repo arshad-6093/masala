@@ -21,6 +21,7 @@ import Masala.Word
 import Masala.VM.Dispatch (sha3)
 import Data.Char
 import Control.Monad
+import System.IO
 
 data RPCCmd = RPCCmd { method :: String, params :: [Value] } deriving (Generic,Show)
 instance FromJSON RPCCmd
@@ -65,14 +66,14 @@ strToSha3 = sha3 . map (fromIntegral . ord)
 abiZero :: U256 -> U256
 abiZero a = a .&. (0xffffffff `shiftL` 224)
 
-_repl :: IO ()
-_repl = do
+repl :: IO ()
+repl = do
   r <- newIORef initRPCState
   forever $ do
-          putStr "> "
+          putStr "> "; hFlush stdout
           inp <- getLine
           o <- runEvmRPC r inp
-          putStrLn o
+          putStrLn o; hFlush stdout
 
 -- | Basic RPC ABI conversion.
 abi :: String -> [U256] -> String
