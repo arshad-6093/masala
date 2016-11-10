@@ -93,10 +93,20 @@ matrix:
   #   compiler: ": #stack nightly"
   #   addons: {apt: {packages: [libgmp-dev]}}
 
-  # Build on OS X in addition to Linux
+  # OSX Build El Cap
   - env: BUILD=stack ARGS=""
-    compiler: ": #stack default osx"
+    compiler: ": #stack default osx default (el cap)"
     os: osx
+    addons:
+      artifacts:
+        paths:
+          - .stack-work/dist/x86_64-osx/Cabal-1.22.5.0/build/masala/masala
+
+  # OSX Build Yosemite
+  - env: BUILD=stack ARGS=""
+    compiler: ": #stack default osx (yosemite)"
+    os: osx
+    osx_image: xcode7.1
     addons:
       artifacts:
         paths:
