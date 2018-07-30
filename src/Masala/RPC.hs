@@ -42,7 +42,7 @@ instance FromJSON WordArray where
 instance Show WordArray where show (WordArray a) = "0x" ++ concatMap showHexPad a
 
 
-parseDropPfxJSON :: (Generic a, GFromJSON (Rep a), FromJSON a) => Int -> Value -> Parser a
+parseDropPfxJSON :: (GFromJSON Zero (Rep a), Generic a) => Int -> Value -> Parser a
 parseDropPfxJSON n = genericParseJSON (defaultOptions { fieldLabelModifier = drop n })
 
 
