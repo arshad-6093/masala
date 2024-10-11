@@ -31,7 +31,7 @@ library
   -- other-extensions:
   ghc-options: -Wall
   build-depends:
-                    base >=4.7 && <4.9
+                    base >=4.7 && <4.15
                 , aeson
                 , bytestring
                 , containers >= 0.5
@@ -46,7 +46,7 @@ library
               , servant
               , snap-core
               , snap-server
-              , snap-core-cors
+              -- , snap-core-cors
                 , split
                 , text
                 , transformers
